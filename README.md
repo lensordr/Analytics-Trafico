@@ -94,6 +94,34 @@ calendar-week totals and clears the confirmation checkbox for review. An
 unassigned gap after the previous job is credited only as assumed uninterrupted
 rest. No order is created until the dispatcher reviews and saves it.
 
+## Journeys, stops and confirmation
+
+Every order is a journey of ordered stops: the loading point, optional extra
+stops, and the final unloading. Extra stops can be an **extra loading**, an
+**extra unloading** or a **trailer swap** (leave the current trailer, pick up
+another; a new trailer plate can be typed and is created on save). Each leg has
+its own kilometres and driving time (manual) or HERE truck route.
+
+Stops are confirmed one by one, in order: ✓ Loaded, ✓ Swap done, ✓ Unloaded and
+✓ Delivered. Quick buttons in Daily planning and on the Fleet board use the
+current time; the order detail accepts the actual time. The first confirmation
+sets the order **In transit**; ✓ Delivered on the last stop sets it **Completed**
+and records the delivery time. Only the last confirmation can be undone, and
+only orders without confirmed stops can be edited.
+
+A confirmed trailer swap marks the left trailer **Parked** at that location and
+makes the picked-up trailer the tractor's current trailer. Trailers show their
+position (parked where and since when, or on which tractor); it can also be set
+manually in the trailer form.
+
+A journey counts as one trip however many stops it has, on its delivery date.
+Analytics history lists every stop with its confirmation time.
+
+The **Fleet board** shows one row per tractor for the chosen day: each journey as
+a chain of stops (green = confirmed, outlined = next, red = overdue), plus free
+tractors and where they are. Existing orders were converted automatically into
+a loading and an unloading stop.
+
 ## Upcoming planning by calendar week
 
 Upcoming planning groups future free windows by Monday–Sunday calendar weeks.
@@ -113,12 +141,11 @@ truck. Refresh fetches the latest saved planning. Trucks missing a
 known location/time are listed separately. This is planned availability, not
 live tracking or confirmation of remaining driving time.
 
-Find next load ranks known planned dropoffs/base locations. Without HERE it
-uses straight-line distance (coordinates required) or matching city/postal
-area; it cannot verify road distance or arrival. With HERE it checks truck
-routing and applies the driver's carried-forward planned clock to the empty
-leg. “Use this tractor” prefills a draft order. The repositioning is NOT saved
-as an order; the dispatcher must confirm and arrange it separately. No live GPS.
+“Companies nearby” on each free window lists the saved companies around the
+truck's free position, closest first (straight-line distance; coordinates
+required, otherwise only the same city). Each company shows its type, contact
+details, notes, load history (how many loads, where they went) and the last
+logged contact. “Log contact” records the result of a call. No live GPS.
 
 ## HERE integration (optional)
 
@@ -203,5 +230,5 @@ Do not expose the development server on a public interface.
 
 Checks use an isolated temporary database, including driver-clock boundaries,
 weekly limits, daylight saving, assignment conflicts, history protection, clock
-carry-forward, offline recommendation ranking, HERE request units (fixture),
+carry-forward, nearby-company ranking, HERE request units (fixture),
 HTTP CSRF protection and SQLite backup consistency.

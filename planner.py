@@ -35,7 +35,9 @@ def week_key(dt):
 
 def number(data, key, default, low, high):
     try:
-        value = float(data.get(key, default))
+        raw = data.get(key)
+        # An empty form field means "not entered": use the default (None = required).
+        value = float(default if raw in (None, "") else raw)
         if not low <= value <= high:
             raise ValueError()
         return value
@@ -152,22 +154,37 @@ class Clock:
                 self.weeks[current] = self.weeks.get(current, 0) + 1
 
 
-def trip_plan(start, driving_hours, loading_hours=1, unloading_hours=1, initial=None, state=None):
+def route_plan(start, stops, initial=None, state=None):
+    """Plan a journey of ordered stops: [{kind, handling_hours, leg_hours}], first = loading.
+
+    `leg_hours` is the pure driving time from the previous stop; rests and breaks are added.
+    Each stop gets its arrival, handling start (after any rest) and handling end."""
     clock = Clock(start, initial, state)
-    loading = round(loading_hours * 60)
+    loading = round(stops[0]["handling_hours"] * 60)
     if loading and (clock.duty + loading > 780 or start + timedelta(minutes=loading) > clock.weekly_due):
         raise ValueError("Rest is due before loading can finish. Move loading later and update the driving clock.")
-    clock.run("Loading", loading)
-    departure = clock.t
-    clock.run("Driving", round(driving_hours*60))
-    arrival = clock.t
-    before = len(clock.events)
-    clock.run("Unloading", round(unloading_hours*60))
-    unloading_events = [event for event in clock.events[before:] if event["kind"] == "Unloading"]
-    unloading_at = parse_time(unloading_events[0]["start"]) if unloading_events else arrival
+    times, departure = [], start
+    for index, stop in enumerate(stops):
+        if index:
+            clock.run("Driving", round(stop.get("leg_hours", 0) * 60))
+        arrival = clock.t
+        before = len(clock.events)
+        clock.run(stop["kind"], round(stop["handling_hours"] * 60))
+        handling = [event for event in clock.events[before:] if event["kind"] == stop["kind"]]
+        begin = parse_time(handling[0]["start"]) if handling else arrival
+        times.append({"arrival_at": stamp(arrival), "start_at": stamp(begin), "end_at": stamp(clock.t)})
+        if index == 0:
+            departure = clock.t
     ready = clock.t
-    return {"departure_at": stamp(departure), "arrival_at": stamp(arrival),
-            "unloading_at": stamp(unloading_at), "available_at": stamp(ready),
+    return {"departure_at": stamp(departure), "arrival_at": times[-1]["arrival_at"],
+            "unloading_at": times[-1]["start_at"], "available_at": stamp(ready),
             "elapsed_hours": round((ready-start).total_seconds()/3600, 2),
             "rest_hours": round(sum(e["minutes"] for e in clock.events if "rest" in e["kind"].lower() or "break" in e["kind"].lower())/60, 2),
-            "timeline": clock.events, "end_state": clock.state()}
+            "timeline": clock.events, "end_state": clock.state(), "stops": times}
+
+
+def trip_plan(start, driving_hours, loading_hours=1, unloading_hours=1, initial=None, state=None):
+    """Classic two-stop trip: loading, driving, unloading."""
+    return route_plan(start, [{"kind": "Loading", "handling_hours": loading_hours},
+                              {"kind": "Unloading", "handling_hours": unloading_hours, "leg_hours": driving_hours}],
+                      initial, state)

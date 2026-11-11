@@ -3,16 +3,18 @@ import argparse
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import secrets
+import socket
 import sqlite3
 import sys
 from urllib.parse import urlsplit
 
 import config
-from planner import Clock, UTC, ZONE, number, parse_time, stamp, trip_plan, week_key
+from planner import Clock, UTC, ZONE, number, parse_time, route_plan, stamp, week_key
 import routing
-from storage import TursoReplica, backup_to, connect, initialize, rows
+from storage import TursoReplica, backup_to, begin_write, connect, initialize, reserve_id, rows
 from upcoming import weekly_availability
 
 ROOT = Path(__file__).resolve().parent
@@ -42,11 +44,41 @@ def item(db, table, value):
     row = db.execute(f"SELECT * FROM {table} WHERE id = ?", (identity(value),)).fetchone()
     if row is None:
         raise ValueError("The selected item no longer exists. Refresh and try again.")
-    return dict(row)
+    # Lowercase keys: a database restored from a Turso backup can name the column PLAN.
+    return {key.lower(): row[key] for key in row.keys()}
 
 
-def selected_trailer(db, data):
-    if "trailer_id" in data:
+LOCATION_KINDS = ("Client", "Unloading only", "Warehouse", "Parking", "Other")
+# Companies that can give the truck its next load (Parking / unloading-only sites cannot).
+LOADING_KINDS = ("Client", "Warehouse", "Other")
+CONTACT_RESULTS = ("Had a load", "No load now", "No answer", "Call back later")
+
+ARCHIVE_REASONS = ("Sold", "Scrapped / end of life", "Lease or rental ended",
+                   "Transferred to another company", "Added by mistake", "Other")
+
+
+def find_by_plate(db, table, plate):
+    row = db.execute(f"SELECT * FROM {table} WHERE plate=? COLLATE NOCASE", (plate,)).fetchone()
+    return dict(row) if row else None
+
+
+def archived_message(record, label):
+    reason = f" ({record['archive_reason']})" if record.get("archive_reason") else ""
+    return f"{label} {record['plate']} is archived{reason}. Restore it from the archive instead of adding it again."
+
+
+def selected_trailer(db, data, create=False):
+    """Resolve the trailer of a form. A typed new plate is created only when saving (create=True)."""
+    new_plate = text(data, "new_trailer", False, 30).upper()
+    if "trailer_id" in data and not data["trailer_id"] and new_plate:
+        trailer = find_by_plate(db, "trailers", new_plate)
+        if trailer is None:
+            if not create:
+                return {"id": None, "plate": new_plate, "active": 1, "archived_at": None}
+            new_id = reserve_id(db, "trailers")
+            db.execute("INSERT INTO trailers (id, plate) VALUES (?, ?)", (new_id, new_plate))
+            trailer = {"id": new_id, "plate": new_plate, "notes": "", "active": 1, "archived_at": None}
+    elif "trailer_id" in data:
         trailer = item(db, "trailers", data["trailer_id"]) if data["trailer_id"] else None
     else:
         # Compatibility with previously-open forms: only known registrations work.
@@ -55,6 +87,8 @@ def selected_trailer(db, data):
         if plate and row is None:
             raise ValueError("Select a registered trailer. Add it under Trailers first.")
         trailer = dict(row) if row else None
+    if trailer and trailer.get("archived_at"):
+        raise ValueError(archived_message(trailer, "Trailer"))
     if trailer and not trailer["active"]:
         raise ValueError("This trailer is inactive. Choose an active trailer or leave it unassigned.")
     return trailer
@@ -72,15 +106,30 @@ def save_master(db, kind, data):
     elif kind == "trailers":
         values = {"plate":text(data,"plate",True,30).upper(),
                   "notes":text(data,"notes",False,2000), "active":1 if data.get("active",True) else 0}
+        if "parked_location_id" in data:
+            # Manual position: where the trailer is parked now (empty = on a tractor / unknown).
+            parked = item(db, "locations", data["parked_location_id"]) if data["parked_location_id"] else None
+            values["parked_location_id"] = parked["id"] if parked else None
+            values["parked_at"] = (stamp(parse_time(data["parked_at"])) if data.get("parked_at")
+                                   else stamp(datetime.now(UTC).replace(second=0, microsecond=0))) if parked else None
     elif kind == "locations":
         values = {key: text(data, key, key != "address") for key in ("company", "city", "postal_code", "country", "address")}
         values.update(lat=None, lon=None, geo_label=text(data, "geo_label", False, 400))
+        # Profile fields: an older open form may not send them, so keep what is saved.
+        saved = item(db, "locations", data["id"]) if data.get("id") else {}
+        for key, limit in (("kind", 40), ("contact_name", 200), ("phone", 60), ("email", 200), ("notes", 2000)):
+            values[key] = text(data, key, False, limit) if key in data else saved.get(key, "")
+        values["kind"] = values["kind"] or "Client"
+        if values["kind"] not in LOCATION_KINDS:
+            raise ValueError("Choose a company type from the list.")
+        if values["email"] and ("@" not in values["email"] or " " in values["email"]):
+            raise ValueError("Enter a valid email address, or leave it empty.")
         lat, lon = data.get("lat"), data.get("lon")
         if lat not in (None, "") or lon not in (None, ""):
             values["lat"] = number(data, "lat", None, -90, 90)
             values["lon"] = number(data, "lon", None, -180, 180)
     elif kind == "trucks":
-        trailer = selected_trailer(db, data)
+        trailer = selected_trailer(db, data, create=True)
         driver = item(db, "drivers", data["driver_id"]) if data.get("driver_id") else None
         location = item(db, "locations", data["location_id"]) if data.get("location_id") else None
         operation = text(data, "operation")
@@ -97,8 +146,17 @@ def save_master(db, kind, data):
             values[key] = number(data, key, default, low, high)
     else:
         raise ValueError("Unknown resource.")
+    if kind in ("trucks", "trailers"):
+        label = "Tractor" if kind == "trucks" else "Trailer"
+        same = find_by_plate(db, kind, values["plate"])
+        if same and str(same["id"]) != str(data.get("id") or ""):
+            if same.get("archived_at"):
+                raise ValueError(archived_message(same, label))
+            raise ValueError(f"{label} {same['plate']} already exists.")
     if data.get("id"):
         row = item(db, kind, data["id"])
+        if row.get("archived_at"):
+            raise ValueError("This item is archived. Restore it before editing.")
         if kind == "locations":
             booked = db.execute("SELECT 1 FROM orders WHERE loading_id=? OR unloading_id=? LIMIT 1", (row["id"],row["id"])).fetchone()
             if booked and any(values[key] != row[key] for key in ("company","city","postal_code","country","address")):
@@ -111,38 +169,199 @@ def save_master(db, kind, data):
     return cursor.lastrowid
 
 
-def build_plan(db, data):
+def archive_master(db, kind, data):
+    """'Delete' a tractor or trailer by archiving it with a reason; records and history are kept."""
+    if kind not in {"trucks", "trailers"}:
+        raise ValueError("Only tractors and trailers can be deleted.")
+    row = item(db, kind, data.get("id"))
+    if row.get("archived_at"):
+        raise ValueError(f"{row['plate']} is already archived.")
+    reason = text(data, "reason", True, 60)
+    if reason not in ARCHIVE_REASONS:
+        raise ValueError("Choose a reason from the list.")
+    note = text(data, "note", reason == "Other", 500)
+    if kind == "trucks":
+        sql = "SELECT number FROM orders WHERE truck_id=? AND status IN ('Planned','In transit') ORDER BY pickup_at"
+    else:
+        sql = """SELECT number FROM orders WHERE status IN ('Planned','In transit') AND (trailer_id=?1
+                 OR id IN (SELECT order_id FROM order_stops WHERE pick_trailer_id=?1)) ORDER BY pickup_at"""
+    planned = [r["number"] for r in db.execute(sql, (row["id"],))]
+    if planned:
+        raise ValueError(f"{row['plate']} still has planned orders: {', '.join(planned)}. "
+                         "Complete, cancel or move them to another vehicle first.")
+    db.execute(f"UPDATE {kind} SET active=0, archived_at=?, archive_reason=?, archive_note=? WHERE id=?",
+               (stamp(datetime.now(UTC)), reason, note, row["id"]))
+    if kind == "trailers":
+        # A sold trailer can no longer be the default trailer of a tractor.
+        db.execute("UPDATE trucks SET trailer='', trailer_id=NULL WHERE trailer_id=?", (row["id"],))
+    return {"archived": row["plate"]}
+
+
+def restore_master(db, kind, data):
+    if kind not in {"trucks", "trailers"}:
+        raise ValueError("Only tractors and trailers can be restored.")
+    row = item(db, kind, data.get("id"))
+    if not row.get("archived_at"):
+        raise ValueError(f"{row['plate']} is not archived.")
+    db.execute(f"UPDATE {kind} SET active=1, archived_at=NULL, archive_reason='', archive_note='' WHERE id=?", (row["id"],))
+    return {"restored": row["plate"]}
+
+
+STOP_KINDS = ("Loading", "Unloading", "Trailer swap")
+MAX_EXTRA_STOPS = 6
+
+
+TIMINGS = ("manual", "rules")
+
+
+def order_timing(data):
+    """`manual`: the dispatcher enters each arrival time (as told by the driver), no driving clock.
+    `rules`: times are calculated from driving hours with the EU driving-rules clock."""
+    timing = data.get("timing") or "rules"
+    if timing not in TIMINGS:
+        raise ValueError("Unknown timing mode.")
+    return timing
+
+
+def uses_rules(plan):
+    """Orders planned with the driving-rules clock; later rules orders of the driver depend on them."""
+    if isinstance(plan, str):
+        plan = json.loads(plan or "{}")
+    return bool((plan or {}).get("end_state"))
+
+
+def manual_leg(source, km_key, hours_key, label, manual_times=False):
+    km = number(source, km_key, 0, 0, 15000)
+    hours = number(source, hours_key, 0, 0, 240)
+    if km > 0 and hours <= 0 and not manual_times:
+        raise ValueError(f"{label}: enter driving hours as well as kilometres. Use driving time, without rest breaks.")
+    return km, hours
+
+
+def arrival_input(source, key, label):
+    if not source.get(key):
+        raise ValueError(f"{label}: enter the planned arrival time.")
+    return parse_time(source[key])
+
+
+def manual_plan(pickup, stops):
+    """Plan from arrival times entered by the dispatcher; no rests are added or checked."""
+    times, timeline, previous_end = [], [], None
+    for index, stop in enumerate(stops):
+        arrival = pickup if index == 0 else stop["arrive_at"]
+        if previous_end and arrival < previous_end:
+            raise ValueError(f"Stop {index + 1} ({stop['kind'].lower()}, {stop['location']['city']}): the arrival "
+                             f"cannot be before the previous stop finishes ({stamp(previous_end)[11:16]} on {stamp(previous_end)[:10]}).")
+        if previous_end and arrival > previous_end:
+            timeline.append({"kind": "On the road (time from driver)", "start": stamp(previous_end), "end": stamp(arrival),
+                             "minutes": round((arrival - previous_end).total_seconds() / 60)})
+        end = arrival + timedelta(hours=stop["handling_hours"])
+        if end > arrival:
+            timeline.append({"kind": stop["kind"], "start": stamp(arrival), "end": stamp(end),
+                             "minutes": round(stop["handling_hours"] * 60)})
+        times.append({"arrival_at": stamp(arrival), "start_at": stamp(arrival), "end_at": stamp(end)})
+        previous_end = end
+    return {"timing": "manual", "departure_at": times[0]["end_at"], "arrival_at": times[-1]["arrival_at"],
+            "unloading_at": times[-1]["start_at"], "available_at": times[-1]["end_at"],
+            "elapsed_hours": round((previous_end - pickup).total_seconds() / 3600, 2), "rest_hours": 0,
+            "timeline": timeline, "end_state": None, "stops": times}
+
+
+def journey_stops(db, data, create=False):
+    """Ordered stops: the loading point, optional extra stops (`via`), then the unloading point."""
+    manual_times = order_timing(data) == "manual"
+    via = data.get("via") or []
+    if not isinstance(via, list) or len(via) > MAX_EXTRA_STOPS:
+        raise ValueError(f"Add at most {MAX_EXTRA_STOPS} extra stops.")
+    stops = [{"kind": "Loading", "location": item(db, "locations", data.get("loading_id")),
+              "handling_hours": number(data, "loading_hours", 1, 0, 6)}]
+    for index, extra in enumerate(via, start=2):
+        if not isinstance(extra, dict):
+            raise ValueError("Invalid extra stop.")
+        kind = extra.get("kind")
+        if kind not in STOP_KINDS:
+            raise ValueError(f"Stop {index}: choose loading, unloading or trailer swap.")
+        stop = {"kind": kind, "location": item(db, "locations", extra.get("location_id")),
+                "handling_hours": number(extra, "handling_hours", 0.5 if kind == "Trailer swap" else 1, 0, 6),
+                "leg": manual_leg(extra, "leg_km", "leg_hours", f"Stop {index}", manual_times)}
+        if manual_times:
+            stop["arrive_at"] = arrival_input(extra, "arrive_at", f"Stop {index}")
+        if kind == "Trailer swap":
+            picked = selected_trailer(db, {"trailer_id": extra.get("pick_trailer_id") or "",
+                                           "new_trailer": extra.get("new_pick_trailer") or ""}, create)
+            if picked is None:
+                raise ValueError(f"Stop {index}: choose the trailer that is picked up at the swap.")
+            stop["pick"] = picked
+        stops.append(stop)
+    stops.append({"kind": "Unloading", "location": item(db, "locations", data.get("unloading_id")),
+                  "handling_hours": number(data, "unloading_hours", 1, 0, 6),
+                  "leg": manual_leg(data, "distance_km", "driving_hours", "Unloading leg", manual_times)})
+    if manual_times:
+        stops[-1]["arrive_at"] = arrival_input(data, "unloading_arrive_at", "Final unloading")
+    return stops
+
+
+def build_plan(db, data, create=False):
+    if not data.get("truck_id"):
+        raise ValueError("Choose the tractor for this order.")
     truck = item(db, "trucks", data.get("truck_id"))
+    if not (data.get("driver_id") or truck["driver_id"]):
+        raise ValueError(f"Choose the driver for this order ({truck['plate']} has no default driver).")
     driver = item(db, "drivers", data.get("driver_id") or truck["driver_id"])
+    for key, label in (("loading_id", "loading point"), ("unloading_id", "final unloading point")):
+        if not data.get(key):
+            raise ValueError(f"Choose the {label}.")
     if not truck["active"] or not driver["active"]:
         raise ValueError("The selected truck and driver must be active.")
-    loading = item(db, "locations", data.get("loading_id"))
-    unloading = item(db, "locations", data.get("unloading_id"))
     pickup = parse_time(data.get("pickup_at"))
-    load_hours = number(data, "loading_hours", 1, 0, 6)
-    unload_hours = number(data, "unloading_hours", 1, 0, 6)
-    trailer = selected_trailer(db, data)
+    trailer = selected_trailer(db, data, create)
+    stops = journey_stops(db, data, create)
+    # Follow the trailer through the journey: a swap drops the current one and picks another.
+    current = trailer
+    for stop in stops:
+        if stop["kind"] == "Trailer swap":
+            if current and stop["pick"]["id"] and current["id"] == stop["pick"]["id"]:
+                raise ValueError("A trailer swap must pick up a different trailer.")
+            stop["drop"], current = current, stop["pick"]
+        stop["trailer"] = current
     mode = data.get("route_mode", "manual")
+    legs, notices = [], []
     if mode == "here":
-        route_truck = {**truck, "trailer": trailer["plate"] if trailer else ""}
-        route = routing.truck_route(loading, unloading, route_truck, stamp(pickup+timedelta(hours=load_hours)))
+        moment = pickup + timedelta(hours=stops[0]["handling_hours"])
+        for previous, stop in zip(stops, stops[1:]):
+            route_truck = {**truck, "trailer": previous["trailer"]["plate"] if previous["trailer"] else ""}
+            leg = routing.truck_route(previous["location"], stop["location"], route_truck, stamp(moment))
+            legs.append((leg["distance_km"], leg["driving_hours"]))
+            notices += leg["notices"]
+            moment += timedelta(hours=leg["driving_hours"] + stop["handling_hours"])
+        source = "HERE truck"
     elif mode == "manual":
-        km = number(data, "distance_km", 0, 0, 15000)
-        hours = number(data, "driving_hours", 0, 0, 240)
-        if km > 0 and hours <= 0:
-            raise ValueError("Enter driving hours as well as kilometres. Use driving time, without rest breaks.")
-        route = {"distance_km": km, "driving_hours": hours, "source": "Manual", "notices": []}
+        legs = [stop["leg"] for stop in stops[1:]]
+        source = "Manual"
     else:
         raise ValueError("Unknown route mode.")
+    for stop, (km, hours) in zip(stops[1:], legs):
+        stop["leg_km"], stop["leg_hours"] = km, hours
+    stops[0]["leg_km"] = stops[0]["leg_hours"] = 0
+    route = {"distance_km": round(sum(km for km, _ in legs), 1), "driving_hours": round(sum(h for _, h in legs), 4),
+             "source": source, "notices": notices,
+             "legs": [{"from": a["location"]["city"], "to": b["location"]["city"], "distance_km": b["leg_km"],
+                       "driving_hours": b["leg_hours"]} for a, b in zip(stops, stops[1:])]}
+    if mode == "here":
+        route["profile"] = {key: truck[key] for key in ("height", "width", "length", "weight")}
+    if order_timing(data) == "manual":
+        return truck, driver, trailer, stops, pickup, {}, route, manual_plan(pickup, stops)
     clock_data = data.get("clock", {})
     if not isinstance(clock_data, dict):
         raise ValueError("Invalid driving clock.")
-    plan = trip_plan(pickup, route["driving_hours"], load_hours, unload_hours, clock_data)
+    plan = route_plan(pickup, [{"kind": s["kind"], "handling_hours": s["handling_hours"], "leg_hours": s["leg_hours"]}
+                               for s in stops], clock_data)
     # Do not silently reset a driver's clock between neighbouring jobs.
     previous_orders = db.execute("SELECT * FROM orders WHERE driver_id=? AND status!='Cancelled' AND id!=?", (driver["id"], data.get("id",0))).fetchall()
     preceding = [dict(order) for order in previous_orders if parse_time(order["available_at"]) <= pickup]
-    if preceding:
-        prior = max(preceding, key=lambda order: parse_time(order["available_at"]))
+    prior = max(preceding, key=lambda order: parse_time(order["available_at"])) if preceding else None
+    # A previous order with manual times has no clock to carry forward.
+    if prior and uses_rules(prior["plan"]):
         expected = Clock(parse_time(prior["available_at"]), state=json.loads(prior["plan"])["end_state"])
         expected.advance_idle(pickup)
         provided = Clock(pickup, clock_data)
@@ -153,31 +372,69 @@ def build_plan(db, data):
                 raise ValueError("Weekly driving hours cannot be lower than this driver's previous planned order. Use Carry forward.")
         if provided.weekly_due > expected.weekly_due + timedelta(minutes=1):
             raise ValueError("Weekly rest is due earlier based on the previous order. Use Carry forward.")
-    return truck, driver, loading, unloading, pickup, load_hours, unload_hours, clock_data, route, plan
+    return truck, driver, trailer, stops, pickup, clock_data, route, plan
 
 
-def conflicts(db, truck, driver, trailer, start, end, exclude=0, trailer_id=None):
+def picked_trailers(db):
+    """Trailer ids picked up at swap stops, per order."""
+    result = {}
+    for row in db.execute("SELECT order_id, pick_trailer_id FROM order_stops WHERE pick_trailer_id IS NOT NULL"):
+        result.setdefault(row["order_id"], set()).add(row["pick_trailer_id"])
+    return result
+
+
+def conflicts(db, truck, driver, trailer, start, end, exclude=0, trailer_id=None, trailer_ids=()):
     found = []
+    wanted = {value for value in (trailer_id, *trailer_ids) if value}
+    picks = picked_trailers(db)
     for row in db.execute("SELECT * FROM orders WHERE status!='Cancelled' AND id!=?", (exclude,)):
-        same = row["truck_id"] == truck or row["driver_id"] == driver or (trailer_id and row["trailer_id"] == trailer_id) or (trailer and row["trailer"].casefold() == trailer.casefold())
+        used = ({row["trailer_id"]} | picks.get(row["id"], set())) - {None}
+        same = row["truck_id"] == truck or row["driver_id"] == driver or bool(wanted & used) or (trailer and row["trailer"].casefold() == trailer.casefold())
         if same and start < parse_time(row["available_at"]) and end > parse_time(row["pickup_at"]):
             found.append(row["number"])
     return found
 
 
+def save_stops(db, order_id, stops, plan):
+    db.execute("DELETE FROM order_stops WHERE order_id=?", (order_id,))
+    for seq, (stop, times) in enumerate(zip(stops, plan["stops"]), start=1):
+        drop, pick = stop.get("drop"), stop.get("pick")
+        db.execute("""INSERT INTO order_stops (order_id, seq, kind, location_id, planned_at, planned_end_at,
+                handling_hours, leg_km, leg_hours, drop_trailer_id, drop_trailer, pick_trailer_id, pick_trailer)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (order_id, seq, stop["kind"], stop["location"]["id"], times["start_at"], times["end_at"],
+             stop["handling_hours"], stop["leg_km"], stop["leg_hours"],
+             drop["id"] if drop else None, drop["plate"] if drop else "",
+             pick["id"] if pick else None, pick["plate"] if pick else ""))
+
+
 def create_order(db, data):
-    db.execute("BEGIN IMMEDIATE")
-    truck, driver, loading, unloading, pickup, lh, uh, initial, route, plan = build_plan(db, data)
-    if not data.get("clock_confirmed"):
+    # All reads and checks first, then every write at the end: on Turso the writes go out as one batch.
+    begin_write(db)
+    truck, driver, trailer_item, stops, pickup, initial, route, plan = build_plan(db, data)
+    # Trailer plates typed as text are created with this order; give them ids now.
+    new_trailers = {}
+    for candidate in [trailer_item, *(stop.get("pick") for stop in stops)]:
+        if candidate and candidate["id"] is None:
+            candidate["id"] = new_trailers.setdefault(candidate["plate"], reserve_id(db, "trailers"))
+    if uses_rules(plan) and not data.get("clock_confirmed"):
         raise ValueError("Confirm the driving clock and repositioning before saving the order.")
-    trailer_item = selected_trailer(db, data)
     trailer = trailer_item["plate"] if trailer_item else ""
     trailer_id = trailer_item["id"] if trailer_item else None
-    collision = conflicts(db, truck["id"], driver["id"], trailer, pickup, parse_time(plan["available_at"]), data.get("id",0), trailer_id=trailer_id)
+    picks = [stop["pick"]["id"] for stop in stops if stop.get("pick")]
+    collision = conflicts(db, truck["id"], driver["id"], trailer, pickup, parse_time(plan["available_at"]), data.get("id",0),
+                          trailer_id=trailer_id, trailer_ids=picks)
     if collision:
-        raise ValueError("Truck, driver or trailer is already assigned: " + ", ".join(collision))
+        busy = [row for row in db.execute("SELECT number, pickup_at, available_at FROM orders WHERE status!='Cancelled'")
+                if row["number"] in collision]
+        detail = "; ".join(f"{row['number']} until {parse_time(row['available_at']).astimezone(ZONE):%d.%m %H:%M}"
+                           for row in busy)
+        raise ValueError(f"Truck, driver or trailer is already assigned: {detail}. "
+                         "Plan the new loading after that time (or change the ETA of that order first).")
+    lh, uh = stops[0]["handling_hours"], stops[-1]["handling_hours"]
+    loading, unloading = stops[0]["location"], stops[-1]["location"]
     later_driver_orders = db.execute("SELECT * FROM orders WHERE driver_id=? AND status!='Cancelled' AND id!=?", (driver["id"],data.get("id",0))).fetchall()
-    if any(parse_time(row["pickup_at"]) >= parse_time(plan["available_at"]) for row in later_driver_orders):
+    if any(parse_time(row["pickup_at"]) >= parse_time(plan["available_at"]) and uses_rules(row["plan"]) for row in later_driver_orders):
         raise ValueError("This driver already has a later order. Add jobs chronologically, or cancel and recreate later orders so their driving clocks stay consistent.")
     values = {"truck_id":truck["id"],"driver_id":driver["id"],"plate":truck["plate"],
               "trailer":trailer,"trailer_id":trailer_id,"driver_name":driver["name"],"carrier":driver["carrier"],
@@ -190,17 +447,155 @@ def create_order(db, data):
     if data.get("id"):
         existing = item(db,"orders",data["id"])
         if existing["status"] != "Planned":
-            raise ValueError("Only planned orders can be edited.")
+            raise ValueError("Only planned orders can be edited. Once a stop is confirmed, undo the confirmation first.")
         later = db.execute("SELECT * FROM orders WHERE driver_id=? AND id!=? AND status!='Cancelled'", (existing["driver_id"],existing["id"])).fetchall()
-        if any(parse_time(row["pickup_at"]) >= parse_time(existing["available_at"]) for row in later):
+        if any(parse_time(row["pickup_at"]) >= parse_time(existing["available_at"]) and uses_rules(row["plan"]) for row in later):
             raise ValueError("Later orders depend on this driver's clock. Cancel those orders before editing this one.")
-        db.execute("UPDATE orders SET " + ",".join(f"{key}=?" for key in values)+" WHERE id=?",(*values.values(),existing["id"]))
-        return existing["id"]
-    cursor = db.execute("INSERT INTO orders ("+",".join(values)+") VALUES ("+",".join("?" for _ in values)+")",tuple(values.values()))
-    order_id = cursor.lastrowid
-    number_value = f"MT-{pickup.astimezone(ZONE).year}-{order_id:06d}"
-    db.execute("UPDATE orders SET number=? WHERE id=?",(number_value,order_id))
+        order_id = existing["id"]
+    else:
+        order_id = reserve_id(db, "orders")
+    # Writes only from here on.
+    for plate, trailer_new_id in new_trailers.items():
+        db.execute("INSERT INTO trailers (id, plate) VALUES (?, ?)", (trailer_new_id, plate))
+    if data.get("id"):
+        db.execute("UPDATE orders SET " + ",".join(f"{key}=?" for key in values)+" WHERE id=?",(*values.values(),order_id))
+    else:
+        values = {"id": order_id, "number": f"MT-{pickup.astimezone(ZONE).year}-{order_id:06d}", **values}
+        db.execute("INSERT INTO orders ("+",".join(values)+") VALUES ("+",".join("?" for _ in values)+")",tuple(values.values()))
+    save_stops(db, order_id, stops, plan)
     return order_id
+
+
+def order_stop_rows(db, order_id):
+    return [dict(row) for row in db.execute("SELECT * FROM order_stops WHERE order_id=? ORDER BY seq", (order_id,))]
+
+
+def park_trailer(db, trailer_id, location_id, at):
+    if trailer_id:
+        db.execute("UPDATE trailers SET parked_location_id=?, parked_at=? WHERE id=?", (location_id, at, trailer_id))
+
+
+def attach_trailer(db, truck_id, trailer_id, plates):
+    """The trailer is now physically on this tractor: not parked, and the tractor's current trailer."""
+    if trailer_id:
+        plate = plates[trailer_id]
+        db.execute("UPDATE trailers SET parked_location_id=NULL, parked_at=NULL WHERE id=?", (trailer_id,))
+        # A trailer is on one tractor at a time: another tractor that had it as current trailer loses it.
+        db.execute("UPDATE trucks SET trailer_id=NULL, trailer='' WHERE trailer_id=? AND id!=?", (trailer_id, truck_id))
+        db.execute("UPDATE trucks SET trailer_id=?, trailer=? WHERE id=?", (trailer_id, plate, truck_id))
+
+
+def set_stop_status(db, data):
+    """Confirm (or undo) one stop. Stops are confirmed in order; the last unloading completes the order."""
+    order = item(db, "orders", data.get("order_id"))
+    if order["status"] == "Cancelled":
+        raise ValueError("This order is cancelled.")
+    stops = order_stop_rows(db, order["id"])
+    try:
+        seq = int(data.get("seq"))
+        stop = next(s for s in stops if s["seq"] == seq)
+    except (TypeError, ValueError, StopIteration):
+        raise ValueError("Choose a valid stop.") from None
+    place = item(db, "locations", stop["location_id"])["city"]
+    plates = {row["id"]: row["plate"] for row in db.execute("SELECT id, plate FROM trailers")}
+    begin_write(db)
+    if data.get("done", True):
+        if stop["status"] == "Done":
+            raise ValueError("This stop is already confirmed.")
+        pending = [s for s in stops if s["seq"] < seq and s["status"] != "Done"]
+        if pending:
+            first = pending[0]
+            raise ValueError(f"Confirm stop {first['seq']} ({first['kind'].lower()}, "
+                             f"{item(db, 'locations', first['location_id'])['city']}) first.")
+        at = parse_time(data["done_at"]) if data.get("done_at") else datetime.now(UTC).replace(second=0, microsecond=0)
+        earlier = [parse_time(s["done_at"]) for s in stops if s["seq"] < seq and s["done_at"]]
+        if earlier and at < max(earlier):
+            raise ValueError("The confirmation time cannot be before the previous stop.")
+        db.execute("UPDATE order_stops SET status='Done', done_at=? WHERE id=?", (stamp(at), stop["id"]))
+        stop.update(status="Done", done_at=stamp(at))
+        if seq == 1:
+            attach_trailer(db, order["truck_id"], order["trailer_id"], plates)
+        if stop["kind"] == "Trailer swap":
+            park_trailer(db, stop["drop_trailer_id"], stop["location_id"], stamp(at))
+            attach_trailer(db, order["truck_id"], stop["pick_trailer_id"], plates)
+        message = f"{stop['kind']} in {place} confirmed."
+    else:
+        later = [s for s in stops if s["seq"] > seq and s["status"] == "Done"]
+        if stop["status"] != "Done" or later:
+            raise ValueError("Only the last confirmed stop can be undone.")
+        db.execute("UPDATE order_stops SET status='Planned', done_at=NULL WHERE id=?", (stop["id"],))
+        undone_at = stop["done_at"]
+        stop.update(status="Planned", done_at=None)
+        if stop["kind"] == "Trailer swap":
+            # Back to the situation before the swap: the picked trailer waits at the swap point.
+            park_trailer(db, stop["pick_trailer_id"], stop["location_id"], undone_at)
+            if stop["drop_trailer_id"]:
+                attach_trailer(db, order["truck_id"], stop["drop_trailer_id"], plates)
+            else:
+                # The tractor arrived at the swap without a trailer: it no longer has the picked one.
+                db.execute("UPDATE trucks SET trailer_id=NULL, trailer='' WHERE id=? AND trailer_id=?",
+                           (order["truck_id"], stop["pick_trailer_id"]))
+        message = f"{stop['kind']} in {place} set back to planned."
+    done = [s for s in stops if s["status"] == "Done"]
+    status = "Completed" if len(done) == len(stops) else "In transit" if done else "Planned"
+    delivered = stops[-1]["done_at"] if status == "Completed" else None
+    # The truck is free from the confirmed delivery, not the planned one (undo restores the plan).
+    available = stops[-1]["planned_end_at"]
+    if delivered and (not uses_rules(order["plan"]) or parse_time(delivered) < parse_time(available)):
+        # A rules-clock order is only moved earlier: later clocks were carried from its planned end.
+        available = delivered
+    db.execute("UPDATE orders SET status=?, delivered_at=?, available_at=? WHERE id=?",
+               (status, delivered, available, order["id"]))
+    warning = ""
+    if delivered:
+        clash = conflicts(db, order["truck_id"], order["driver_id"], order["trailer"], parse_time(order["pickup_at"]),
+                          parse_time(available), order["id"], trailer_id=order["trailer_id"])
+        if clash:
+            warning = f"The confirmed delivery overlaps with {', '.join(clash)}. Check the next order."
+    return {"status": status, "message": message, "warning": warning}
+
+
+def update_stop_eta(db, data):
+    """New planned arrival for a stop not yet confirmed (e.g. the driver calls with a new ETA).
+    Later unconfirmed stops move by the same amount, so their handling times stay the same."""
+    order = item(db, "orders", data.get("order_id"))
+    if order["status"] in ("Cancelled", "Completed"):
+        raise ValueError(f"This order is {order['status'].lower()}; its times can no longer change.")
+    stops = order_stop_rows(db, order["id"])
+    try:
+        seq = int(data.get("seq"))
+        stop = next(s for s in stops if s["seq"] == seq)
+    except (TypeError, ValueError, StopIteration):
+        raise ValueError("Choose a valid stop.") from None
+    if stop["status"] == "Done":
+        raise ValueError("This stop is already confirmed; undo the confirmation to change its time.")
+    begin_write(db)
+    new = parse_time(data.get("planned_at"))
+    done_times = [parse_time(s["done_at"]) for s in stops if s["seq"] < seq and s["done_at"]]
+    if done_times and new < max(done_times):
+        raise ValueError("The new arrival cannot be before the previous confirmed stop.")
+    delta = new - parse_time(stop["planned_at"])
+    for s in stops:
+        if s["seq"] >= seq and s["status"] != "Done":
+            s["planned_at"] = stamp(parse_time(s["planned_at"]) + delta)
+            s["planned_end_at"] = stamp(parse_time(s["planned_end_at"]) + delta)
+            db.execute("UPDATE order_stops SET planned_at=?, planned_end_at=? WHERE id=?",
+                       (s["planned_at"], s["planned_end_at"], s["id"]))
+    first, last = stops[0], stops[-1]
+    plan = json.loads(order["plan"] or "{}")
+    plan.update(arrival_at=last["planned_at"], unloading_at=last["planned_at"], available_at=last["planned_end_at"],
+                eta_updated_at=stamp(datetime.now(UTC)))
+    plan["stops"] = [{"arrival_at": s["planned_at"], "start_at": s["planned_at"], "end_at": s["planned_end_at"]} for s in stops]
+    db.execute("UPDATE orders SET pickup_at=?, arrival_at=?, unloading_at=?, available_at=?, plan=? WHERE id=?",
+               (first["planned_at"], last["planned_at"], last["planned_at"], last["planned_end_at"], json.dumps(plan), order["id"]))
+    place = item(db, "locations", stop["location_id"])["city"]
+    message = f"New ETA in {place}: {stop['planned_at'][11:16]}"
+    if stop is not last:
+        message += f"; delivery now {last['planned_at'][8:10]}.{last['planned_at'][5:7]} {last['planned_at'][11:16]}"
+    clash = conflicts(db, order["truck_id"], order["driver_id"], order["trailer"], parse_time(first["planned_at"]),
+                      parse_time(last["planned_end_at"]), order["id"], trailer_id=order["trailer_id"],
+                      trailer_ids=[s["pick_trailer_id"] for s in stops if s["pick_trailer_id"]])
+    return {"message": message + ".", "warning": ("Now overlaps with " + ", ".join(clash) + ". Check the next order.") if clash else ""}
 
 
 def clock_fields(clock):
@@ -218,76 +613,73 @@ def carry_clock(db,data):
     if not previous:
         return {"clock":clock_fields(Clock(at)),"message":"No prior order. Enter actual hours, or confirm a fresh-rest assumption."}
     order = max(previous,key=lambda o:parse_time(o["available_at"]))
+    if not uses_rules(order["plan"]):
+        return {"clock":clock_fields(Clock(at)),"message":f"{order['number']} uses manual times, so there is no planned clock to carry. Enter the driver's actual hours."}
     clock = Clock(parse_time(order["available_at"]),state=order["plan"]["end_state"])
     clock.advance_idle(at)
     return {"clock":clock_fields(clock),"message":f"Carried from {order['number']}. Unassigned gaps are assumed to be rest/breaks; verify against the tachograph."}
 
 
-def recommend(db,data):
-    destination = item(db,"locations",data.get("location_id"))
-    pickup = parse_time(data.get("pickup_at"))
-    now = datetime.now(UTC).replace(second=0,microsecond=0)
-    if pickup < now:
-        raise ValueError("Choose a future loading time for recommendations.")
-    all_orders = [o for o in rows(db,"orders") if o["status"]!="Cancelled"]
-    locations = {o["id"]:o for o in rows(db,"locations")}
-    drivers = {o["id"]:o for o in rows(db,"drivers")}
-    results, excluded = [], []
-    for truck in rows(db,"trucks"):
-        if not truck["active"] or not truck["driver_id"] or not drivers[truck["driver_id"]]["active"]:
+def nearby_companies(db, data, now=None):
+    """Saved companies around a truck's free position, closest first, with load and contact history."""
+    origin = item(db, "locations", data.get("location_id"))
+    radius = number(data, "radius_km", 150, 5, 2000)
+    include_all = bool(data.get("include_all"))
+    now = (now or datetime.now(UTC)).astimezone(UTC)
+    locations = rows(db, "locations")
+    by_id = {loc["id"]: loc for loc in locations}
+    orders = {o["id"]: o for o in rows(db, "orders") if o["status"] != "Cancelled"}
+    loads = {}
+    for order in orders.values():
+        for stop in order["stops"]:
+            if stop["kind"] == "Loading":
+                loads.setdefault(stop["location_id"], []).append((stop["planned_at"], order))
+    same_city = lambda a, b: all(a[k].strip().casefold() == b[k].strip().casefold() for k in ("city", "country"))
+    results, missing = [], []
+    for loc in locations:
+        if not include_all and loc["kind"] not in LOADING_KINDS:
             continue
-        related = [o for o in all_orders if o["truck_id"]==truck["id"] or o["driver_id"]==truck["driver_id"] or (truck["trailer_id"] and o["trailer_id"]==truck["trailer_id"]) or (truck["trailer"] and o["trailer"].casefold()==truck["trailer"].casefold())]
-        if any(parse_time(o["pickup_at"])<=pickup<parse_time(o["available_at"]) for o in related):
-            excluded.append({"plate":truck["plate"],"reason":"Already assigned at the new loading time."})
+        distance = routing.air_distance(origin, loc)
+        if distance is None:
+            if not same_city(origin, loc):
+                missing.append(loc["company"])
+                continue
+        elif distance > radius:
             continue
-        prior = [o for o in all_orders if o["truck_id"]==truck["id"] and parse_time(o["available_at"])<=pickup]
-        previous = max(prior,key=lambda o:parse_time(o["available_at"])) if prior else None
-        origin = locations.get(previous["unloading_id"] if previous else truck["location_id"])
-        ready = parse_time(previous["available_at"]) if previous else (parse_time(truck["available_from"]) if truck["available_from"] else None)
-        if origin is None or ready is None or ready>pickup:
-            excluded.append({"plate":truck["plate"],"reason":"Add a known location and availability time, or a preceding order."})
-            continue
-        departure = max(ready,now)
-        air = routing.air_distance(origin,destination)
-        same_area = all(origin[k].casefold()==destination[k].casefold() for k in ("country","city","postal_code"))
-        result = {"truck_id":truck["id"],"plate":truck["plate"],"driver_id":truck["driver_id"],
-                  "driver_name":drivers[truck["driver_id"]]["name"],"carrier":drivers[truck["driver_id"]]["carrier"],
-                  "trailer":truck["trailer"],"operation":truck["operation"],"origin":origin,
-                  "available_at":stamp(ready),"origin_source":previous["number"] if previous else "Fleet location",
-                  "air_km":air,"same_area":same_area,"road_km":None,"arrival_at":None,
-                  "feasible":None,"clock":None,"warning":"Geographic shortlist only. Road access, repositioning time and driving clock are not verified."}
-        if data.get("use_here"):
-            try:
-                route = routing.truck_route(origin,destination,truck,stamp(departure))
-                # A different driver may have driven the truck's last trip; use the driver's own history.
-                driver_prior = [o for o in all_orders if o["driver_id"]==truck["driver_id"] and parse_time(o["available_at"])<=departure]
-                last_driver_order = max(driver_prior,key=lambda o:parse_time(o["available_at"])) if driver_prior else None
-                if last_driver_order:
-                    clock = Clock(parse_time(last_driver_order["available_at"]),state=last_driver_order["plan"]["end_state"])
-                    clock.advance_idle(departure)
-                else:
-                    clock = Clock(departure)
-                clock.run("Driving",round(route["driving_hours"]*60))
-                arrival = clock.t
-                collision = conflicts(db,truck["id"],truck["driver_id"],truck["trailer"],departure,arrival,trailer_id=truck["trailer_id"])
-                feasible = arrival<=pickup and not collision
-                result.update(road_km=route["distance_km"],arrival_at=stamp(arrival),feasible=feasible)
-                if feasible:
-                    clock.advance_idle(pickup)
-                    result["clock"] = clock_fields(clock)
-                result["warning"] = "Planning estimate; verify actual clocks and truck position. Repositioning is not a saved order."
-                if not last_driver_order:
-                    result["warning"] += " Fresh-rest assumption: no previous driver order."
-                if collision:
-                    result["warning"] += " Repositioning conflicts with " + ", ".join(collision)
-            except ValueError as exc:
-                result["warning"] = str(exc)
-        if air is None and not same_area and result["road_km"] is None:
-            excluded.append({"plate":truck["plate"],"reason":"Coordinates missing; distance cannot be ranked."})
-            continue
-        results.append(result)
-    results.sort(key=lambda r:(r["feasible"] is False, r["road_km"] if r["road_km"] is not None else (r["air_km"] if r["air_km"] is not None else -1)))
-    return {"candidates":results,"excluded":excluded,"location":destination}
+        history = sorted(loads.get(loc["id"], []), key=lambda entry: entry[0], reverse=True)
+        destinations = {}
+        for _, order in history:
+            target = by_id.get(order["unloading_id"])
+            if target:
+                label = f"{target['city']} ({target['country']})"
+                destinations[label] = destinations.get(label, 0) + 1
+        last_contact = loc["contacts"][0] if loc["contacts"] else None
+        recent = bool(last_contact and now - parse_time(last_contact["at"]) < timedelta(days=3))
+        results.append({"location": {k: v for k, v in loc.items() if k != "contacts"},
+                        "km": distance, "same_site": loc["id"] == origin["id"],
+                        "loads": len(history), "last_load_at": history[0][0] if history else None,
+                        "destinations": sorted(destinations, key=lambda d: -destinations[d])[:3],
+                        "last_contact": last_contact, "contacts": loc["contacts"][:5],
+                        "contacted_recently": recent})
+    # Closest first; at the same distance, companies that already gave loads come first.
+    results.sort(key=lambda r: (r["km"] if r["km"] is not None else 0, not r["same_site"], -r["loads"]))
+    note = None
+    if origin.get("lat") is None or origin.get("lon") is None:
+        note = (f"{origin['company']} ({origin['city']}) has no coordinates, so only companies in the same city "
+                "are shown. Add coordinates under Saved locations to rank by distance.")
+    return {"origin": origin, "radius_km": radius, "companies": results,
+            "missing_coordinates": len(missing), "note": note}
+
+
+def log_contact(db, data):
+    location = item(db, "locations", data.get("location_id"))
+    result = text(data, "result", True, 40)
+    if result not in CONTACT_RESULTS:
+        raise ValueError("Choose the result of the contact from the list.")
+    at = parse_time(data["at"]) if data.get("at") else datetime.now(UTC).replace(second=0, microsecond=0)
+    db.execute("INSERT INTO location_contacts (location_id, at, result, note) VALUES (?, ?, ?, ?)",
+               (location["id"], stamp(at), result, text(data, "note", False, 500)))
+    return {"message": f"Contact with {location['company']} saved: {result}."}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -313,7 +705,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/state":
             with connect(self.server.database) as db:
                 state = {key:rows(db,key) for key in ("drivers","trucks","trailers","locations","orders")}
-            state.update(token=TOKEN,here_configured=routing.configured(),now=stamp(datetime.now(UTC)),timezone="Europe/Madrid")
+            state.update(token=TOKEN,here_configured=routing.configured(),now=stamp(datetime.now(UTC)),timezone="Europe/Madrid",
+                         storage="turso" if isinstance(self.server.database,TursoReplica) else "sqlite")
             return self.send_body(200,state)
         if path == "/api/backup":
             # SQLite online backup produces a transactionally consistent snapshot.
@@ -349,6 +742,10 @@ class Handler(BaseHTTPRequestHandler):
             with connect(self.server.database) as db:
                 if path in {"/api/drivers","/api/trucks","/api/trailers","/api/locations"}:
                     result = {"id":save_master(db,path.rsplit("/",1)[1],data)}
+                elif path == "/api/archive":
+                    result = archive_master(db,data.get("kind"),data)
+                elif path == "/api/restore":
+                    result = restore_master(db,data.get("kind"),data)
                 elif path == "/api/preview":
                     *_,route,plan = build_plan(db,data)
                     result = {"route":route,"plan":plan}
@@ -357,22 +754,32 @@ class Handler(BaseHTTPRequestHandler):
                 elif path == "/api/order-status":
                     order = item(db,"orders",data.get("id"))
                     status = data.get("status")
-                    if status not in {"Planned","Completed","Cancelled"}:
+                    if status == "Completed":
+                        raise ValueError("Confirm the stops instead: confirming the last unloading completes the order.")
+                    if status != "Cancelled":
                         raise ValueError("Invalid status.")
+                    if order["status"] == "Completed":
+                        raise ValueError("Completed orders cannot be cancelled.")
                     if order["status"] == "Cancelled" and status!="Cancelled":
                         raise ValueError("Cancelled orders cannot be reopened. Create a new order.")
                     if status == "Cancelled":
-                        later = [o for o in rows(db,"orders") if o["status"]!="Cancelled" and o["id"]!=order["id"] and o["driver_id"]==order["driver_id"] and parse_time(o["pickup_at"])>=parse_time(order["available_at"])]
+                        later = [o for o in rows(db,"orders") if o["status"]!="Cancelled" and o["id"]!=order["id"] and o["driver_id"]==order["driver_id"] and parse_time(o["pickup_at"])>=parse_time(order["available_at"]) and uses_rules(o["plan"])]
                         if later:
                             raise ValueError("Cancel this driver's later orders first; their clocks depend on this order.")
                     db.execute("UPDATE orders SET status=? WHERE id=?",(status,order["id"]))
                     result = {"ok":True}
+                elif path == "/api/stop-status":
+                    result = set_stop_status(db,data)
+                elif path == "/api/stop-eta":
+                    result = update_stop_eta(db,data)
                 elif path == "/api/geocode":
                     result = {"matches":routing.geocode(text(data,"query",True,600))}
-                elif path == "/api/recommend":
-                    result = recommend(db,data)
                 elif path == "/api/upcoming":
                     result = weekly_availability(db,data)
+                elif path == "/api/nearby":
+                    result = nearby_companies(db,data)
+                elif path == "/api/location-contact":
+                    result = log_contact(db,data)
                 elif path == "/api/clock":
                     result = carry_clock(db,data)
                 else:
@@ -388,6 +795,16 @@ class Handler(BaseHTTPRequestHandler):
             self.send_body(500,{"error":"The request could not be saved. Check the server terminal."})
 
 
+class Server(ThreadingHTTPServer):
+    """On Windows, SO_REUSEADDR lets a second copy share the port silently; refuse instead."""
+    if os.name == "nt":
+        allow_reuse_address = False
+
+        def server_bind(self):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            super().server_bind()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port",type=int,default=5000)
@@ -401,7 +818,13 @@ def main():
     else:
         database = args.database or ROOT/"data"/"malcomtrans.sqlite3"
     initialize(database)
-    with ThreadingHTTPServer(("127.0.0.1",args.port),Handler) as server:
+    try:
+        server = Server(("127.0.0.1",args.port),Handler)
+    except OSError:
+        print(f"Port {args.port} is already in use: MalcomTrans (or another program) is already running.",flush=True)
+        print(f"Open http://127.0.0.1:{args.port} or close the other MalcomTrans window first.",flush=True)
+        sys.exit(1)
+    with server:
         server.database = database
         print(f"Daily Traking MalcomTrans: http://127.0.0.1:{server.server_port}",flush=True)
         print(f"Database: {database}",flush=True)

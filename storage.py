@@ -2,9 +2,12 @@
 from contextlib import contextmanager
 import json
 from pathlib import Path
+import secrets
 import sqlite3
 import threading
 import time
+
+from planner import parse_time
 
 
 class TursoReplica:
@@ -25,6 +28,8 @@ class TursoReplica:
         self._conn = libsql.connect(str(self.local_path), sync_url=url, auth_token=token)
         self._lock = threading.RLock()
         self._last_sync = 0.0
+        # Once per connection: every statement sent to Turso costs a network round trip.
+        self._conn.execute("PRAGMA foreign_keys = ON")
         self.sync()
 
     def sync(self):
@@ -37,15 +42,20 @@ class TursoReplica:
         with self._lock:
             if time.monotonic() - self._last_sync > self.SYNC_INTERVAL:
                 self.sync()
-            db = _LibsqlConnection(self._conn)
+            db = _LibsqlConnection(self._conn, self.sync)
             try:
-                db.execute("PRAGMA foreign_keys = ON")
                 yield db
-                self._conn.commit()
+                db.flush()  # a batch commits itself and syncs
+                if db.direct:
+                    self._conn.commit()
             except Exception:
-                self._conn.rollback()
+                db.pending = []
+                try:
+                    self._conn.rollback()
+                except ValueError:
+                    pass  # nothing open (e.g. a batch already rolled itself back)
                 raise
-            if db.wrote:
+            if db.direct:
                 self.sync()
 
     def __str__(self):
@@ -91,18 +101,86 @@ class _LibsqlCursor:
         return iter(self.fetchall())
 
 
+def _literal(value):
+    """SQL literal for a parameter, used only to batch already-validated writes to Turso."""
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            raise ValueError("Invalid number.")
+        return repr(value)
+    if isinstance(value, bytes):
+        return "X'" + value.hex() + "'"
+    text = str(value)
+    if "\x00" in text:
+        raise ValueError("Text cannot contain NUL characters.")
+    return "'" + text.replace("'", "''") + "'"
+
+
+def _render(sql, parameters):
+    """Replace ? placeholders (outside quoted text) with literals."""
+    values, out, quote = iter(parameters), [], None
+    for char in sql:
+        if quote:
+            quote = None if char == quote else quote
+        elif char in "'\"":
+            quote = char
+        elif char == "?":
+            try:
+                char = _literal(next(values))
+            except StopIteration:
+                raise ValueError("Too few SQL parameters.") from None
+            except TypeError:
+                raise ValueError("Invalid SQL parameter.") from None
+        out.append(char)
+    if next(values, _render) is not _render:
+        raise ValueError("Too many SQL parameters.")
+    return "".join(out)
+
+
+class _QueuedCursor:
+    lastrowid = None
+    rowcount = -1
+
+    def fetchone(self):
+        return None
+
+    def fetchall(self):
+        return []
+
+    def __iter__(self):
+        return iter(())
+
+
 class _LibsqlConnection:
     """Exposes the subset of sqlite3.Connection the app uses, with Row results."""
 
     _READ_ONLY = ("SELECT", "PRAGMA", "WITH", "EXPLAIN")
 
-    def __init__(self, conn):
+    def __init__(self, conn, after_flush=lambda: None):
         self._conn = conn
+        self.after_flush = after_flush
         self.wrote = False
+        self.direct = False  # writes sent one by one (outside a batch); they need commit + sync
+        self.deferred = False
+        self.pending = []
+        self.reserved = {}
 
     def execute(self, sql, parameters=()):
         if not sql.lstrip().upper().startswith(self._READ_ONLY):
             self.wrote = True
+            if self.deferred:
+                self.pending.append(_render(sql, tuple(parameters)))
+                return _QueuedCursor()
+        elif self.pending:
+            # Reading back queued writes: send them first (flush also refreshes the replica).
+            self.flush()
+        if not self.deferred and not sql.lstrip().upper().startswith(self._READ_ONLY):
+            self.direct = True
         try:
             return _LibsqlCursor(self._conn.execute(sql, tuple(parameters)))
         except ValueError as exc:
@@ -115,6 +193,61 @@ class _LibsqlConnection:
         except ValueError as exc:
             raise _translate(exc) from None
 
+    def flush(self):
+        """Send queued writes to Turso as one atomic batch: one round trip instead of one per statement.
+
+        Turso does not report errors from a script, so the batch ends by writing a unique receipt;
+        after syncing, a missing receipt means the batch was rolled back."""
+        if not self.pending:
+            return
+        token = secrets.token_hex(12)
+        script = ("PRAGMA foreign_keys = ON;\nBEGIN IMMEDIATE;\n" + ";\n".join(self.pending) +
+                  ";\nDELETE FROM write_receipts;\n"
+                  f"INSERT INTO write_receipts (token, at) VALUES ('{token}', datetime('now'));\nCOMMIT;")
+        self.pending, self.deferred = [], False
+        try:
+            self._conn.executescript(script)
+        except ValueError as exc:
+            try:
+                self._conn.execute("ROLLBACK")
+            except ValueError:
+                pass
+            raise _translate(exc) from None
+        self.after_flush()
+        if self._conn.execute("SELECT 1 FROM write_receipts WHERE token=?", (token,)).fetchone() is None:
+            raise sqlite3.OperationalError("The change was not saved in the cloud database (nothing was changed). "
+                                           "Refresh and try again; the data may have changed meanwhile.")
+
+
+def begin_write(db):
+    """Start the writing part of a request.
+
+    SQLite: take the write lock now. Turso: reads keep using the fast local replica, and the
+    writes are queued and sent at the end of the request as one atomic batch. Code after this
+    call must not read back its own writes, and new rows need ids from `reserve_id`."""
+    if isinstance(db, _LibsqlConnection):
+        if db.direct and not db.deferred:
+            # Earlier one-by-one writes hold an open transaction; the batch needs its own.
+            db._conn.commit()
+            db.after_flush()
+            db.direct = False
+        db.deferred = True
+    elif not db.in_transaction:
+        db.execute("BEGIN IMMEDIATE")
+
+
+def reserve_id(db, table):
+    """Next row id for an INSERT with an explicit id (works while Turso writes are queued)."""
+    if table not in {"orders", "trailers"}:
+        raise ValueError("Invalid table.")
+    row = db.execute(f"""SELECT max(coalesce((SELECT seq FROM sqlite_sequence WHERE name=?), 0),
+                                   coalesce((SELECT max(id) FROM {table}), 0)) + 1""", (table,)).fetchone()
+    value = row[0]
+    if isinstance(db, _LibsqlConnection):
+        value = max(value, db.reserved.get(table, 0) + 1)
+        db.reserved[table] = value
+    return value
+
 
 @contextmanager
 def connect(target):
@@ -123,7 +256,8 @@ def connect(target):
             yield db
         return
     db = sqlite3.connect(target, timeout=15)
-    db.row_factory = sqlite3.Row
+    # Same rows as on Turso: lower-case keys, even in a copy of a Turso backup (column `PLAN`).
+    db.row_factory = lambda cursor, values: Row(zip((column[0].lower() for column in cursor.description), values))
     db.execute("PRAGMA foreign_keys = ON")
     try:
         yield db
@@ -199,6 +333,15 @@ def initialize(target):
             columns = {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
             if "trailer_id" not in columns:
                 db.execute(f"ALTER TABLE {table} ADD COLUMN trailer_id INTEGER REFERENCES trailers(id)")
+        # Archive instead of delete: sold/scrapped equipment keeps its trip history.
+        for table in ("trucks", "trailers"):
+            columns = {row["name"].lower() for row in db.execute(f"PRAGMA table_info({table})")}
+            if "archived_at" not in columns:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN archived_at TEXT")
+            if "archive_reason" not in columns:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN archive_reason TEXT NOT NULL DEFAULT ''")
+            if "archive_note" not in columns:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN archive_note TEXT NOT NULL DEFAULT ''")
         # Import existing registrations once without rewriting historical snapshots.
         db.execute("""INSERT OR IGNORE INTO trailers (plate)
             SELECT DISTINCT upper(trim(trailer)) FROM trucks WHERE trailer_id IS NULL AND trim(trailer)!=''
@@ -208,6 +351,66 @@ def initialize(target):
                 SELECT id FROM trailers WHERE plate=trim({table}.trailer) COLLATE NOCASE)
                 WHERE trailer_id IS NULL AND trim(trailer)!=''""")
         db.execute("CREATE INDEX IF NOT EXISTS orders_trailer ON orders(trailer_id, pickup_at)")
+        # Proof that a batch of writes reached Turso (see _LibsqlConnection.flush); keeps one row.
+        db.execute("CREATE TABLE IF NOT EXISTS write_receipts (token TEXT PRIMARY KEY, at TEXT NOT NULL)")
+        # Journeys are ordered stops (loading, extra loading/unloading, trailer swap, unloading),
+        # each confirmed on its own. The order row keeps the first/last stop for summaries.
+        db.executescript("""
+        CREATE TABLE IF NOT EXISTS order_stops (
+            id INTEGER PRIMARY KEY, order_id INTEGER NOT NULL REFERENCES orders(id),
+            seq INTEGER NOT NULL, kind TEXT NOT NULL,
+            location_id INTEGER NOT NULL REFERENCES locations(id),
+            planned_at TEXT NOT NULL, planned_end_at TEXT NOT NULL,
+            handling_hours REAL NOT NULL DEFAULT 1,
+            leg_km REAL NOT NULL DEFAULT 0, leg_hours REAL NOT NULL DEFAULT 0,
+            drop_trailer_id INTEGER REFERENCES trailers(id), drop_trailer TEXT NOT NULL DEFAULT '',
+            pick_trailer_id INTEGER REFERENCES trailers(id), pick_trailer TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'Planned', done_at TEXT,
+            UNIQUE(order_id, seq));
+        CREATE INDEX IF NOT EXISTS order_stops_planned ON order_stops(planned_at);
+        """)
+        columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(orders)")}
+        if "delivered_at" not in columns:
+            db.execute("ALTER TABLE orders ADD COLUMN delivered_at TEXT")
+        columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(trailers)")}
+        if "parked_location_id" not in columns:
+            db.execute("ALTER TABLE trailers ADD COLUMN parked_location_id INTEGER REFERENCES locations(id)")
+        if "parked_at" not in columns:
+            db.execute("ALTER TABLE trailers ADD COLUMN parked_at TEXT")
+        # Company profile and contact details: used to find who to call near a free truck.
+        columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(locations)")}
+        for column, default in (("kind", "'Client'"), ("contact_name", "''"), ("phone", "''"),
+                                ("email", "''"), ("notes", "''")):
+            if column not in columns:
+                db.execute(f"ALTER TABLE locations ADD COLUMN {column} TEXT NOT NULL DEFAULT {default}")
+        # Log of calls/emails to a company: "had a load", "no answer"... newest first in the UI.
+        db.execute("""CREATE TABLE IF NOT EXISTS location_contacts (
+            id INTEGER PRIMARY KEY, location_id INTEGER NOT NULL REFERENCES locations(id),
+            at TEXT NOT NULL, result TEXT NOT NULL, note TEXT NOT NULL DEFAULT '')""")
+        db.execute("CREATE INDEX IF NOT EXISTS location_contacts_location ON location_contacts(location_id, at)")
+        # Existing two-stop orders become a loading stop and an unloading stop (once).
+        db.execute("""INSERT INTO order_stops (order_id, seq, kind, location_id, planned_at, planned_end_at,
+                handling_hours, status, done_at)
+            SELECT id, 1, 'Loading', loading_id, pickup_at, pickup_at, loading_hours,
+                CASE WHEN status='Completed' THEN 'Done' ELSE 'Planned' END,
+                CASE WHEN status='Completed' THEN pickup_at END
+            FROM orders WHERE NOT EXISTS (SELECT 1 FROM order_stops s WHERE s.order_id=orders.id)""")
+        db.execute("""INSERT INTO order_stops (order_id, seq, kind, location_id, planned_at, planned_end_at,
+                handling_hours, leg_km, leg_hours, status, done_at)
+            SELECT id, 2, 'Unloading', unloading_id, unloading_at, available_at, unloading_hours,
+                distance_km, driving_hours,
+                CASE WHEN status='Completed' THEN 'Done' ELSE 'Planned' END,
+                CASE WHEN status='Completed' THEN unloading_at END
+            FROM orders WHERE (SELECT count(*) FROM order_stops s WHERE s.order_id=orders.id)=1""")
+        db.execute("UPDATE orders SET delivered_at=unloading_at WHERE status='Completed' AND delivered_at IS NULL")
+        # Delivered orders free the truck from the confirmed delivery (orders confirmed before this rule).
+        # Driving-rules orders are only moved earlier: later clocks were carried from their planned end.
+        for order in db.execute("SELECT id, available_at, delivered_at, plan FROM orders "
+                                "WHERE status='Completed' AND delivered_at IS NOT NULL").fetchall():
+            delivered, available = parse_time(order["delivered_at"]), parse_time(order["available_at"])
+            rules = bool(json.loads(order["plan"] or "{}").get("end_state"))
+            if delivered != available and (not rules or delivered < available):
+                db.execute("UPDATE orders SET available_at=? WHERE id=?", (order["delivered_at"], order["id"]))
 
 
 def rows(db, table):
@@ -217,7 +420,17 @@ def rows(db, table):
     result = [{key.lower(): row[key] for key in row.keys()}
               for row in db.execute(f"SELECT * FROM {table} ORDER BY id DESC")]
     if table == "orders":
+        stops = {}
+        for stop in db.execute("SELECT * FROM order_stops ORDER BY order_id, seq"):
+            stops.setdefault(stop["order_id"], []).append({key.lower(): stop[key] for key in stop.keys()})
         for row in result:
             for field in ("plan", "clock_input", "route_details"):
                 row[field] = json.loads(row[field])
+            row["stops"] = stops.get(row["id"], [])
+    if table == "locations":
+        contacts = {}
+        for contact in db.execute("SELECT * FROM location_contacts ORDER BY at DESC, id DESC"):
+            contacts.setdefault(contact["location_id"], []).append({key.lower(): contact[key] for key in contact.keys()})
+        for row in result:
+            row["contacts"] = contacts.get(row["id"], [])
     return result

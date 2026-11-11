@@ -1,12 +1,12 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Daily Traking MalcomTrans</title><link rel="stylesheet" href="/style.css"><script src="/search-select.js" defer></script><script src="/analytics.js" defer></script><script src="/app.js" defer></script></head>
+<title>Daily Traking MalcomTrans</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/style.css"><script src="/search-select.js" defer></script><script src="/analytics.js" defer></script><script src="/app.js" defer></script></head>
 <body>
 <aside class="sidebar"><a class="brand" href="/" aria-label="Daily Traking MalcomTrans home"><span class="brand-mark">M<span>↗</span></span><span>MalcomTrans<small>DAILY TRAKING</small></span></a>
 <div class="nav-label">DISPATCH WORKSPACE</div><nav aria-label="Main navigation">
+<button class="nav" data-view="board"><span>▣</span> Fleet board</button>
 <button class="nav active" data-view="planner"><span>▦</span> Daily planning <i id="nav-count">0</i></button>
 <button class="nav" data-view="upcoming"><span>▤</span> Upcoming planning</button>
-<button class="nav" data-view="matches"><span>⌁</span> Find next load</button>
 <button class="nav" data-view="analytics"><span>▥</span> Analytics</button>
 <div class="nav-label">DIRECTORY</div>
 <button class="nav" data-view="trucks"><span>▱</span> Tractors</button>
@@ -14,7 +14,7 @@
 <button class="nav" data-view="drivers"><span>♙</span> Drivers & carriers</button>
 <button class="nav" data-view="locations"><span>⌖</span> Saved locations</button>
 <button class="nav" data-view="settings"><span>⚙</span> Settings & backup</button>
-</nav><div class="sidebar-bottom"><span class="online-dot"></span> Local workspace<small>SQLite · Your data, on this computer</small></div></aside>
+</nav><div class="sidebar-bottom"><span class="online-dot"></span> <span id="storage-title">Local workspace</span><small id="storage-detail">SQLite · Your data, on this computer</small></div></aside>
 <div class="workspace"><header class="topbar"><div><span class="breadcrumb">Operations</span><span class="slash">/</span><strong id="breadcrumb">Daily planning</strong></div><div class="clock-label">◷ <span id="today-label"></span><span class="avatar">MT</span></div></header>
 <main id="main" tabindex="-1"></main><footer>Daily Traking MalcomTrans <span>Single-driver planning · Dispatch clock: Europe/Madrid</span></footer></div>
 <dialog id="modal"><div class="modal-header"><div><div class="eyebrow" id="modal-kicker">DISPATCH WORKSPACE</div><h2 id="modal-title"></h2></div><button class="icon-button" id="close-modal" aria-label="Close dialog">×</button></div><div id="modal-content"></div></dialog>
