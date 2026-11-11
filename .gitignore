@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Secrets — never commit
+.env
+data/
+
+# Local databases and copies (may contain drivers' personal data)
+*.sqlite3
+*.db
+*.db-*
+backups/
+logs/

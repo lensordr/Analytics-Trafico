@@ -1,0 +1,27 @@
+// Run with: node tests/test_analytics.js
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict'),path=require('node:path');
+const root=path.join(__dirname,'../static'),context=vm.createContext({console,document:{addEventListener(){}}});
+vm.runInContext(fs.readFileSync(path.join(root,'app.js'),'utf8').split("document.addEventListener('click'")[0],context);
+vm.runInContext(fs.readFileSync(path.join(root,'analytics.js'),'utf8'),context);
+vm.runInContext(fs.readFileSync(path.join(root,'search-select.js'),'utf8'),context);
+vm.runInContext(`state={now:'2026-11-11T10:00+01:00',trucks:[{id:1,plate:'ONE',operation:'Local'},{id:2,plate:'TWO',operation:'National'}],trailers:[{id:7,plate:'TR-NEW',active:1,notes:''}],drivers:[{id:3,name:'Demo'}],locations:[{id:1,city:'Madrid',company:'A',postal_code:'28001',country:'Spain'},{id:2,city:'Bilbao',company:'B',postal_code:'48001',country:'Spain'}],orders:[]};
+const base={truck_id:1,plate:'ONE',trailer_id:7,trailer:'TR-OLD',driver_id:3,driver_name:'Demo',operation:'Local',loading_id:1,unloading_id:2,distance_km:100,status:'Completed',pickup_at:'2026-10-31T08:00+01:00',number:'TEST'};
+state.orders=[{...base,id:1,unloading_at:'2026-11-01T08:00+01:00'},{...base,id:2,unloading_at:'2026-11-02T08:00+01:00'},{...base,id:3,status:'Planned',unloading_at:'2026-11-03T08:00+01:00'},{...base,id:4,status:'Cancelled',unloading_at:'2026-11-04T08:00+01:00'},{...base,id:5,unloading_at:'2026-10-31T08:00+01:00'}];analyticsInit();`,context);
+const value=expression=>JSON.parse(vm.runInContext(`JSON.stringify(${expression})`,context));
+assert.equal(value('analyticsOrders().length'),2);
+assert.equal(value('analyticsFilters.to'),'2026-11-30');
+assert.deepEqual(value('analyticsGroups(analyticsOrders()).map(g=>[g.plate,g.completed,g.distance])'),[['ONE',2,200],['TWO',0,0]]);
+vm.runInContext("analyticsFilters.group='week'",context);
+assert.deepEqual(value('analyticsGroups(analyticsOrders()).map(g=>[g.period,g.completed])'),[['2026-10-26',1],['2026-11-02',1]]);
+vm.runInContext("analyticsFilters.group='month';analyticsFilters.from='2026-10-01'",context);
+assert.deepEqual(value('analyticsGroups(analyticsOrders()).map(g=>[g.period,g.completed])'),[['2026-10',1],['2026-11',2]]);
+vm.runInContext("analyticsFilters.trailer='7';analyticsFilters.loading='Madrid';analyticsFilters.unloading='48001'",context);
+assert.equal(value('analyticsOrders().length'),3);
+vm.runInContext("analyticsFilters.truck='2'",context);assert.equal(value('analyticsOrders().length'),0);
+vm.runInContext("analyticsFilters.truck='';analyticsFilters.status=''",context);
+assert.equal(value('analyticsOrders().length'),5);
+assert.equal(value('analyticsGroups(analyticsOrders()).reduce((n,g)=>n+g.completed,0)'),3);
+assert.ok(value('analyticsView()').includes('TR-OLD'));
+assert.ok(value("trailerPicker('Trailer',7)").includes('TR-NEW'));
+assert.ok(value("trailerPicker('Trailer','')").includes('name="trailer_id" value=""'));
+console.log('Analytics checks passed: unloading dates, weekly/monthly boundaries, filters, status totals, history, trailer selectors.');
