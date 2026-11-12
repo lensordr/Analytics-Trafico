@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 import json
 from pathlib import Path
+import re
 import secrets
 import sqlite3
 import threading
@@ -388,6 +389,38 @@ def initialize(target):
             id INTEGER PRIMARY KEY, location_id INTEGER NOT NULL REFERENCES locations(id),
             at TEXT NOT NULL, result TEXT NOT NULL, note TEXT NOT NULL DEFAULT '')""")
         db.execute("CREATE INDEX IF NOT EXISTS location_contacts_location ON location_contacts(location_id, at)")
+        # ITV (vehicle inspection) register, kept exactly as the official document: its plates are
+        # the full registrations and do not need to match the tractors/trailers used for dispatch.
+        db.execute("""CREATE TABLE IF NOT EXISTS itv_vehicles (
+            id INTEGER PRIMARY KEY, kind TEXT NOT NULL, plate TEXT NOT NULL,
+            expires_on TEXT, expiry_text TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '')""")
+        # Materials loaded at clients (own codes), chosen on loading stops; stops keep a text snapshot.
+        db.execute("""CREATE TABLE IF NOT EXISTS materials (
+            id INTEGER PRIMARY KEY, code TEXT NOT NULL DEFAULT '', name TEXT NOT NULL,
+            ler_code TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1)""")
+        columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(order_stops)")}
+        if "material_id" not in columns:
+            db.execute("ALTER TABLE order_stops ADD COLUMN material_id INTEGER REFERENCES materials(id)")
+        if "material" not in columns:
+            db.execute("ALTER TABLE order_stops ADD COLUMN material TEXT NOT NULL DEFAULT ''")
+        if "weight_kg" not in columns:
+            db.execute("ALTER TABLE order_stops ADD COLUMN weight_kg REAL")
+        # Documento de Control (DeCA): shipper's NIF, the document id and its own fields per order.
+        columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(locations)")}
+        if "nif" not in columns:
+            db.execute("ALTER TABLE locations ADD COLUMN nif TEXT NOT NULL DEFAULT ''")
+            # Imported companies carry "CIF X" in their notes: copy it into the new field once.
+            for row in db.execute("SELECT id, notes FROM locations").fetchall():
+                found = re.search(r"\bCIF\s+([A-Z0-9][A-Z0-9 .\-]{5,20}?)(?:\.\s|\.?$)", row["notes"] or "")
+                if found:
+                    nif = re.sub(r"[^A-Z0-9]", "", found.group(1).upper())
+                    db.execute("UPDATE locations SET nif=? WHERE id=?", (nif, row["id"]))
+        columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(orders)")}
+        for column, kind in (("deca_id", "TEXT"), ("deca_shipper_id", "INTEGER REFERENCES locations(id)"),
+                             ("deca_notes", "TEXT NOT NULL DEFAULT ''"), ("deca_created_at", "TEXT")):
+            if column not in columns:
+                db.execute(f"ALTER TABLE orders ADD COLUMN {column} {kind}")
+        db.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')")
         # Existing two-stop orders become a loading stop and an unloading stop (once).
         db.execute("""INSERT INTO order_stops (order_id, seq, kind, location_id, planned_at, planned_end_at,
                 handling_hours, status, done_at)
@@ -414,7 +447,7 @@ def initialize(target):
 
 
 def rows(db, table):
-    if table not in {"drivers", "trucks", "trailers", "locations", "orders"}:
+    if table not in {"drivers", "trucks", "trailers", "locations", "orders", "itv_vehicles", "materials"}:
         raise ValueError("Unknown table")
     # Lower-case keys also cover backups restored from Turso, whose schema may say `PLAN`.
     result = [{key.lower(): row[key] for key in row.keys()}

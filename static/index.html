@@ -4,7 +4,7 @@
 <body>
 <aside class="sidebar"><a class="brand" href="/" aria-label="Daily Traking MalcomTrans home"><span class="brand-mark">M<span>↗</span></span><span>MalcomTrans<small>DAILY TRAKING</small></span></a>
 <div class="nav-label">DISPATCH WORKSPACE</div><nav aria-label="Main navigation">
-<button class="nav" data-view="board"><span>▣</span> Fleet board</button>
+<button class="nav" data-view="board"><span>▣</span> Fleet board <i id="nav-alerts" hidden></i></button>
 <button class="nav active" data-view="planner"><span>▦</span> Daily planning <i id="nav-count">0</i></button>
 <button class="nav" data-view="upcoming"><span>▤</span> Upcoming planning</button>
 <button class="nav" data-view="analytics"><span>▥</span> Analytics</button>
@@ -13,6 +13,8 @@
 <button class="nav" data-view="trailers"><span>▱</span> Trailers</button>
 <button class="nav" data-view="drivers"><span>♙</span> Drivers & carriers</button>
 <button class="nav" data-view="locations"><span>⌖</span> Saved locations</button>
+<button class="nav" data-view="materials"><span>▣</span> Materials</button>
+<button class="nav" data-view="itv"><span>✓</span> ITV <i id="nav-itv" hidden></i></button>
 <button class="nav" data-view="settings"><span>⚙</span> Settings & backup</button>
 </nav><div class="sidebar-bottom"><span class="online-dot"></span> <span id="storage-title">Local workspace</span><small id="storage-detail">SQLite · Your data, on this computer</small></div></aside>
 <div class="workspace"><header class="topbar"><div><span class="breadcrumb">Operations</span><span class="slash">/</span><strong id="breadcrumb">Daily planning</strong></div><div class="clock-label">◷ <span id="today-label"></span><span class="avatar">MT</span></div></header>

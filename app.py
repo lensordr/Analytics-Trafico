@@ -9,13 +9,16 @@ import secrets
 import socket
 import sqlite3
 import sys
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
+import base64
 import config
+import deca
 from planner import Clock, UTC, ZONE, number, parse_time, route_plan, stamp, week_key
 import routing
 from storage import TursoReplica, backup_to, begin_write, connect, initialize, reserve_id, rows
 from upcoming import weekly_availability
+import xlsx
 
 ROOT = Path(__file__).resolve().parent
 TOKEN = secrets.token_urlsafe(32)
@@ -39,7 +42,7 @@ def identity(value):
 
 
 def item(db, table, value):
-    if table not in {"drivers", "trucks", "trailers", "locations", "orders"}:
+    if table not in {"drivers", "trucks", "trailers", "locations", "orders", "itv_vehicles", "materials"}:
         raise ValueError("Invalid item type.")
     row = db.execute(f"SELECT * FROM {table} WHERE id = ?", (identity(value),)).fetchone()
     if row is None:
@@ -117,8 +120,9 @@ def save_master(db, kind, data):
         values.update(lat=None, lon=None, geo_label=text(data, "geo_label", False, 400))
         # Profile fields: an older open form may not send them, so keep what is saved.
         saved = item(db, "locations", data["id"]) if data.get("id") else {}
-        for key, limit in (("kind", 40), ("contact_name", 200), ("phone", 60), ("email", 200), ("notes", 2000)):
+        for key, limit in (("kind", 40), ("contact_name", 200), ("phone", 60), ("email", 200), ("notes", 2000), ("nif", 30)):
             values[key] = text(data, key, False, limit) if key in data else saved.get(key, "")
+        values["nif"] = values["nif"].upper().replace(" ", "")
         values["kind"] = values["kind"] or "Client"
         if values["kind"] not in LOCATION_KINDS:
             raise ValueError("Choose a company type from the list.")
@@ -208,6 +212,7 @@ def restore_master(db, kind, data):
 
 
 STOP_KINDS = ("Loading", "Unloading", "Trailer swap")
+DEFAULT_HANDLING_HOURS = 2  # loading/unloading time when the form does not say otherwise
 MAX_EXTRA_STOPS = 6
 
 
@@ -267,6 +272,29 @@ def manual_plan(pickup, stops):
             "timeline": timeline, "end_state": None, "stops": times}
 
 
+def material_label(material):
+    return f"{material['code']} · {material['name']}" if material["code"] else material["name"]
+
+
+def weight(data, key, label):
+    """Optional weight in kg (empty = not entered)."""
+    raw = data.get(key)
+    if raw in (None, ""):
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = -1
+    if not 0 < value <= 60000:
+        raise ValueError(f"{label}: weight must be between 1 and 60000 kg.")
+    return value
+
+
+def chosen_material(db, value):
+    """Optional material loaded at a loading stop (empty = not specified)."""
+    return item(db, "materials", value) if value not in (None, "", 0, "0") else None
+
+
 def journey_stops(db, data, create=False):
     """Ordered stops: the loading point, optional extra stops (`via`), then the unloading point."""
     manual_times = order_timing(data) == "manual"
@@ -274,7 +302,9 @@ def journey_stops(db, data, create=False):
     if not isinstance(via, list) or len(via) > MAX_EXTRA_STOPS:
         raise ValueError(f"Add at most {MAX_EXTRA_STOPS} extra stops.")
     stops = [{"kind": "Loading", "location": item(db, "locations", data.get("loading_id")),
-              "handling_hours": number(data, "loading_hours", 1, 0, 6)}]
+              "handling_hours": number(data, "loading_hours", DEFAULT_HANDLING_HOURS, 0, 6),
+              "material": chosen_material(db, data.get("material_id")),
+              "weight_kg": weight(data, "loading_weight_kg", "Loading")}]
     for index, extra in enumerate(via, start=2):
         if not isinstance(extra, dict):
             raise ValueError("Invalid extra stop.")
@@ -282,10 +312,14 @@ def journey_stops(db, data, create=False):
         if kind not in STOP_KINDS:
             raise ValueError(f"Stop {index}: choose loading, unloading or trailer swap.")
         stop = {"kind": kind, "location": item(db, "locations", extra.get("location_id")),
-                "handling_hours": number(extra, "handling_hours", 0.5 if kind == "Trailer swap" else 1, 0, 6),
+                "handling_hours": number(extra, "handling_hours", 0.5 if kind == "Trailer swap" else DEFAULT_HANDLING_HOURS, 0, 6),
                 "leg": manual_leg(extra, "leg_km", "leg_hours", f"Stop {index}", manual_times)}
         if manual_times:
             stop["arrive_at"] = arrival_input(extra, "arrive_at", f"Stop {index}")
+        if kind == "Loading":
+            stop["material"] = chosen_material(db, extra.get("material_id"))
+        if kind in ("Loading", "Unloading"):
+            stop["weight_kg"] = weight(extra, "weight_kg", f"Stop {index}")
         if kind == "Trailer swap":
             picked = selected_trailer(db, {"trailer_id": extra.get("pick_trailer_id") or "",
                                            "new_trailer": extra.get("new_pick_trailer") or ""}, create)
@@ -294,7 +328,8 @@ def journey_stops(db, data, create=False):
             stop["pick"] = picked
         stops.append(stop)
     stops.append({"kind": "Unloading", "location": item(db, "locations", data.get("unloading_id")),
-                  "handling_hours": number(data, "unloading_hours", 1, 0, 6),
+                  "handling_hours": number(data, "unloading_hours", DEFAULT_HANDLING_HOURS, 0, 6),
+                  "weight_kg": weight(data, "unloading_weight_kg", "Final unloading"),
                   "leg": manual_leg(data, "distance_km", "driving_hours", "Unloading leg", manual_times)})
     if manual_times:
         stops[-1]["arrive_at"] = arrival_input(data, "unloading_arrive_at", "Final unloading")
@@ -398,14 +433,17 @@ def conflicts(db, truck, driver, trailer, start, end, exclude=0, trailer_id=None
 def save_stops(db, order_id, stops, plan):
     db.execute("DELETE FROM order_stops WHERE order_id=?", (order_id,))
     for seq, (stop, times) in enumerate(zip(stops, plan["stops"]), start=1):
-        drop, pick = stop.get("drop"), stop.get("pick")
+        drop, pick, material = stop.get("drop"), stop.get("pick"), stop.get("material")
         db.execute("""INSERT INTO order_stops (order_id, seq, kind, location_id, planned_at, planned_end_at,
-                handling_hours, leg_km, leg_hours, drop_trailer_id, drop_trailer, pick_trailer_id, pick_trailer)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                handling_hours, leg_km, leg_hours, drop_trailer_id, drop_trailer, pick_trailer_id, pick_trailer,
+                material_id, material, weight_kg)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (order_id, seq, stop["kind"], stop["location"]["id"], times["start_at"], times["end_at"],
              stop["handling_hours"], stop["leg_km"], stop["leg_hours"],
              drop["id"] if drop else None, drop["plate"] if drop else "",
-             pick["id"] if pick else None, pick["plate"] if pick else ""))
+             pick["id"] if pick else None, pick["plate"] if pick else "",
+             material["id"] if material else None, material_label(material) if material else "",
+             stop.get("weight_kg")))
 
 
 def create_order(db, data):
@@ -682,6 +720,134 @@ def log_contact(db, data):
     return {"message": f"Contact with {location['company']} saved: {result}."}
 
 
+# ---------------------------------------------------------------- ITV register
+ITV_KINDS = ("Tractora", "Remolque")
+
+
+def itv_value(raw):
+    """(expires_on 'YYYY-MM-DD' or None, expiry_text) from a document cell.
+    Non-date text such as 'CADUCADO' or '---------' is kept exactly as written."""
+    if raw is None:
+        return None, ""
+    if hasattr(raw, "isoformat") and not isinstance(raw, str):
+        return (raw.date() if isinstance(raw, datetime) else raw).isoformat(), ""
+    value = str(raw).strip()
+    for pattern in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%d/%m/%y"):
+        try:
+            return datetime.strptime(value, pattern).date().isoformat(), ""
+        except ValueError:
+            pass
+    return None, value
+
+
+def parse_itv_workbook(data):
+    """Read the ITV Excel: one sheet per vehicle type (sheet name with REMOLQUE / TRACTORA),
+    a 'Matricula' column and an expiry ('Fecha', 'Caducidad') column."""
+    vehicles, seen = [], set()
+    for name, sheet in xlsx.read_workbook(data).items():
+        upper = name.upper()
+        kind = "Remolque" if ("REMOLQ" in upper or "TRAIL" in upper) else "Tractora" if ("TRACT" in upper or "CAMI" in upper) else None
+        rows_ = [[("" if v is None else v) for v in row] for row in sheet]
+        if not any(any(str(v).strip() for v in row) for row in rows_):
+            continue
+        if kind is None:
+            raise ValueError(f"Sheet '{name}': name it REMOLQUE or TRACTORA so the vehicle type is clear.")
+        header = next((i for i, row in enumerate(rows_) if any("MATRIC" in str(v).upper() for v in row)), None)
+        if header is None:
+            raise ValueError(f"Sheet '{name}': no 'Matricula' column found.")
+        titles = [str(v).upper() for v in rows_[header]]
+        plate_col = next(i for i, v in enumerate(titles) if "MATRIC" in v)
+        date_col = next((i for i, v in enumerate(titles) if i != plate_col and any(k in v for k in ("FECHA", "CADUC", "ITV", "EXPIR"))),
+                        plate_col + 1)
+        for row in rows_[header + 1:]:
+            plate = str(row[plate_col]).strip() if plate_col < len(row) else ""
+            if not plate:
+                continue
+            key = (kind, plate.upper())
+            if key in seen:
+                raise ValueError(f"Sheet '{name}': {plate} appears twice.")
+            seen.add(key)
+            expires_on, expiry_text = itv_value(row[date_col] if date_col < len(row) and row[date_col] != "" else None)
+            vehicles.append({"kind": kind, "plate": plate, "expires_on": expires_on, "expiry_text": expiry_text})
+    if not vehicles:
+        raise ValueError("No vehicles found in the Excel file.")
+    return vehicles
+
+
+def import_itv(db, data):
+    """Preview (default) or replace the whole ITV register with the Excel document."""
+    try:
+        content = base64.b64decode(str(data.get("file", "")), validate=True)
+    except ValueError:
+        raise ValueError("The file could not be read. Choose the Excel file again.") from None
+    vehicles = parse_itv_workbook(content)
+    current = db.execute("SELECT count(*) AS n FROM itv_vehicles").fetchone()["n"]
+    if not data.get("confirm"):
+        return {"vehicles": vehicles, "current": current}
+    begin_write(db)
+    db.execute("DELETE FROM itv_vehicles")
+    for v in vehicles:
+        db.execute("INSERT INTO itv_vehicles (kind, plate, expires_on, expiry_text) VALUES (?, ?, ?, ?)",
+                   (v["kind"], v["plate"], v["expires_on"], v["expiry_text"]))
+    return {"message": f"ITV list replaced: {len(vehicles)} vehicles imported."}
+
+
+def save_itv(db, data):
+    kind = text(data, "kind", True, 20)
+    if kind not in ITV_KINDS:
+        raise ValueError("Choose Tractora or Remolque.")
+    plate = text(data, "plate", True, 30).upper()
+    expires_on, expiry_text = itv_value(data.get("expires_on") or None)
+    if expiry_text:
+        raise ValueError("Enter a valid expiry date.")
+    if not expires_on:
+        expiry_text = text(data, "expiry_text", False, 40)
+    same = db.execute("SELECT id FROM itv_vehicles WHERE kind=? AND upper(plate)=?", (kind, plate)).fetchone()
+    if same and str(same["id"]) != str(data.get("id") or ""):
+        raise ValueError(f"{kind} {plate} is already in the ITV list.")
+    values = (kind, plate, expires_on, expiry_text, text(data, "notes", False, 500))
+    if data.get("id"):
+        row = item(db, "itv_vehicles", data["id"])
+        db.execute("UPDATE itv_vehicles SET kind=?, plate=?, expires_on=?, expiry_text=?, notes=? WHERE id=?", (*values, row["id"]))
+        return row["id"]
+    return db.execute("INSERT INTO itv_vehicles (kind, plate, expires_on, expiry_text, notes) VALUES (?, ?, ?, ?, ?)", values).lastrowid
+
+
+def delete_itv(db, data):
+    row = item(db, "itv_vehicles", data.get("id"))
+    db.execute("DELETE FROM itv_vehicles WHERE id=?", (row["id"],))
+    return {"message": f"{row['plate']} removed from the ITV list."}
+
+
+def save_material(db, data):
+    """Materials loaded at clients. The code is your own (it may repeat in the source list)."""
+    values = {"code": text(data, "code", False, 20), "name": text(data, "name", True, 120),
+              "ler_code": text(data, "ler_code", False, 20), "notes": text(data, "notes", False, 1000),
+              "active": 1 if data.get("active", True) else 0}
+    same = db.execute("SELECT id FROM materials WHERE code=? AND lower(name)=lower(?)", (values["code"], values["name"])).fetchone()
+    if same and str(same["id"]) != str(data.get("id") or ""):
+        raise ValueError(f"{values['code']} · {values['name']} is already in the list.")
+    if data.get("id"):
+        material = item(db, "materials", data["id"])
+        db.execute("UPDATE materials SET " + ",".join(f"{key}=?" for key in values) + " WHERE id=?",
+                   (*values.values(), material["id"]))
+        # Planned and future stops show the corrected name; confirmed history keeps what was loaded.
+        db.execute("UPDATE order_stops SET material=? WHERE material_id=? AND status!='Done'",
+                   (material_label(values), material["id"]))
+        return material["id"]
+    return db.execute("INSERT INTO materials (" + ",".join(values) + ") VALUES (" + ",".join("?" for _ in values) + ")",
+                      tuple(values.values())).lastrowid
+
+
+def delete_material(db, data):
+    material = item(db, "materials", data.get("id"))
+    used = db.execute("SELECT count(*) FROM order_stops WHERE material_id=?", (material["id"],)).fetchone()[0]
+    # Orders keep the material text they were created with.
+    db.execute("UPDATE order_stops SET material_id=NULL WHERE material_id=?", (material["id"],))
+    db.execute("DELETE FROM materials WHERE id=?", (material["id"],))
+    return {"message": f"{material_label(material)} removed" + (f" (kept as text on {used} stops)." if used else ".")}
+
+
 class Handler(BaseHTTPRequestHandler):
     def send_body(self,status,body,content_type="application/json; charset=utf-8"):
         if not isinstance(body,bytes):
@@ -705,9 +871,26 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/state":
             with connect(self.server.database) as db:
                 state = {key:rows(db,key) for key in ("drivers","trucks","trailers","locations","orders")}
+                state["itv"] = rows(db,"itv_vehicles")
+                state["materials"] = rows(db,"materials")
+                state["settings"] = deca.settings(db)
             state.update(token=TOKEN,here_configured=routing.configured(),now=stamp(datetime.now(UTC)),timezone="Europe/Madrid",
                          storage="turso" if isinstance(self.server.database,TursoReplica) else "sqlite")
             return self.send_body(200,state)
+        if path == "/api/deca.pdf":
+            query = dict(parse_qsl(urlsplit(self.path).query))
+            try:
+                with connect(self.server.database) as db:
+                    filename, body = deca.pdf(db, query.get("order"))
+            except ValueError as error:
+                return self.send_body(400, {"error": str(error)})
+            self.send_response(200)
+            self.send_header("Content-Type", "application/pdf")
+            self.send_header("Content-Disposition", f'inline; filename="{filename}"')
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return self.wfile.write(body)
         if path == "/api/backup":
             # SQLite online backup produces a transactionally consistent snapshot.
             import tempfile
@@ -733,7 +916,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_body(403,{"error":"Please reload the app and try again."})
         try:
             length = int(self.headers.get("Content-Length","0"))
-            if not 0<length<100000:
+            limit = 3_000_000 if urlsplit(self.path).path == "/api/itv-import" else 100000
+            if not 0<length<limit:
                 raise ValueError("Invalid request size.")
             data = json.loads(self.rfile.read(length))
             if not isinstance(data,dict):
@@ -776,6 +960,20 @@ class Handler(BaseHTTPRequestHandler):
                     result = {"matches":routing.geocode(text(data,"query",True,600))}
                 elif path == "/api/upcoming":
                     result = weekly_availability(db,data)
+                elif path == "/api/itv":
+                    result = {"id":save_itv(db,data)}
+                elif path == "/api/itv-delete":
+                    result = delete_itv(db,data)
+                elif path == "/api/settings":
+                    result = deca.save_settings(db,data)
+                elif path == "/api/deca":
+                    result = deca.prepare(db,data)
+                elif path == "/api/materials":
+                    result = {"id":save_material(db,data)}
+                elif path == "/api/material-delete":
+                    result = delete_material(db,data)
+                elif path == "/api/itv-import":
+                    result = import_itv(db,data)
                 elif path == "/api/nearby":
                     result = nearby_companies(db,data)
                 elif path == "/api/location-contact":

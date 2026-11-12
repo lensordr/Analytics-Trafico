@@ -16,6 +16,33 @@ from storage import connect, initialize, rows
 from upcoming import weekly_availability, subtract_bookings
 
 
+
+def make_xlsx(sheets):
+    """Tiny .xlsx for tests: {sheet name: rows}; datetime.date cells get a date style."""
+    import datetime, io, zipfile
+    from xml.sax.saxutils import escape
+    def cell(ref, value):
+        if value is None:
+            return ""
+        if isinstance(value, datetime.date):
+            return f'<c r="{ref}" s="1"><v>{(value - datetime.date(1899, 12, 30)).days}</v></c>'
+        return f'<c r="{ref}" t="inlineStr"><is><t>{escape(str(value))}</t></is></c>'
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as z:
+        main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+        rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+        z.writestr("xl/workbook.xml", f'<workbook xmlns="{main}" xmlns:r="{rel}"><sheets>' + "".join(
+            f'<sheet name="{escape(name)}" sheetId="{i}" r:id="rId{i}"/>' for i, name in enumerate(sheets, 1)) + "</sheets></workbook>")
+        z.writestr("xl/_rels/workbook.xml.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + "".join(
+            f'<Relationship Id="rId{i}" Target="worksheets/sheet{i}.xml" Type="ws"/>' for i in range(1, len(sheets) + 1)) + "</Relationships>")
+        z.writestr("xl/styles.xml", f'<styleSheet xmlns="{main}"><cellXfs><xf numFmtId="0"/><xf numFmtId="14"/></cellXfs></styleSheet>')
+        for i, rows in enumerate(sheets.values(), 1):
+            body = "".join(f'<row r="{r}">' + "".join(cell(f"{chr(65 + c)}{r}", v) for c, v in enumerate(row)) + "</row>"
+                           for r, row in enumerate(rows, 1))
+            z.writestr(f"xl/worksheets/sheet{i}.xml", f'<worksheet xmlns="{main}"><sheetData>{body}</sheetData></worksheet>')
+    return buffer.getvalue()
+
+
 class DispatchTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -33,6 +60,127 @@ class DispatchTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+
+    def test_itv_excel_import_preview_then_replace(self):
+        import base64, datetime
+        document = make_xlsx({
+            "REMOLQUE": [["Matricula", "Fecha Caducidad"], ["R2321DBL", datetime.date(2027, 2, 25)],
+                         ["R5741DBH", "CADUCADO"], ["R1240BBX", "---------"]],
+            "TRACTORA": [["MATRICULA", "FECHA CADUC."], ["1812MKN", datetime.date(2027, 1, 23)], ["8798NTR", None]],
+            "Notas": []})
+        payload = {"file": base64.b64encode(document).decode()}
+        with connect(self.database) as db:
+            preview = app.import_itv(db, payload)
+            self.assertEqual(preview["current"], 0)
+            self.assertEqual([(v["kind"], v["plate"], v["expires_on"], v["expiry_text"]) for v in preview["vehicles"]], [
+                ("Remolque", "R2321DBL", "2027-02-25", ""), ("Remolque", "R5741DBH", None, "CADUCADO"),
+                ("Remolque", "R1240BBX", None, "---------"), ("Tractora", "1812MKN", "2027-01-23", ""),
+                ("Tractora", "8798NTR", None, "")])
+            self.assertEqual(rows(db, "itv_vehicles"), [])  # a preview writes nothing
+            app.save_itv(db, {"kind": "Tractora", "plate": "OLD1234"})
+        with connect(self.database) as db:
+            self.assertIn("replaced: 5", app.import_itv(db, {**payload, "confirm": True})["message"])
+        with connect(self.database) as db:
+            # Exactly the document: the old entry is gone, plates are not matched to dispatch vehicles.
+            self.assertEqual(sorted(v["plate"] for v in rows(db, "itv_vehicles")),
+                             ["1812MKN", "8798NTR", "R1240BBX", "R2321DBL", "R5741DBH"])
+            with self.assertRaisesRegex(ValueError, "appears twice"):
+                app.parse_itv_workbook(make_xlsx({"TRACTORA": [["Matricula", "Fecha"], ["A1", None], ["a1", None]]}))
+            with self.assertRaisesRegex(ValueError, "REMOLQUE or TRACTORA"):
+                app.parse_itv_workbook(make_xlsx({"Hoja1": [["Matricula", "Fecha"], ["A1", None]]}))
+            with self.assertRaisesRegex(ValueError, "not an Excel"):
+                app.import_itv(db, {"file": base64.b64encode(b"plain text").decode()})
+
+    def test_materials_on_loading_stops(self):
+        with connect(self.database) as db:
+            iron = app.save_material(db, {"code": "07", "name": "HIERRO", "ler_code": "17 04 05"})
+            copper = app.save_material(db, {"code": "04", "name": "COBRE"})
+            # Repeated codes exist in the real list: allowed, but not the exact same pair twice.
+            app.save_material(db, {"code": "07", "name": "Otro"})
+            with self.assertRaisesRegex(ValueError, "already in the list"):
+                app.save_material(db, {"code": "07", "name": "hierro"})
+            c = app.save_master(db, "locations", {"company": "Extra", "city": "Lleida", "postal_code": "25001", "country": "Spain"})
+            order_id = app.create_order(db, self.manual_payload(material_id=iron,
+                via=[{"kind": "Loading", "location_id": c, "handling_hours": 1, "arrive_at": "2030-01-07T14:00", "material_id": copper},
+                     {"kind": "Unloading", "location_id": c, "handling_hours": 1, "arrive_at": "2030-01-07T18:00", "material_id": copper}]))
+            stops = app.order_stop_rows(db, order_id)
+        self.assertEqual([(s["material_id"], s["material"]) for s in stops],
+                         [(iron, "07 · HIERRO"), (copper, "04 · COBRE"), (None, ""), (None, "")])
+        with connect(self.database) as db:
+            app.save_material(db, {"id": copper, "code": "04", "name": "COBRE LIMPIO"})
+            self.assertEqual(app.order_stop_rows(db, order_id)[1]["material"], "04 · COBRE LIMPIO")
+            self.assertIn("kept as text on 1 stops", app.delete_material(db, {"id": copper})["message"])
+            stop = app.order_stop_rows(db, order_id)[1]
+            self.assertEqual((stop["material_id"], stop["material"]), (None, "04 · COBRE LIMPIO"))
+            self.assertEqual(len(rows(db, "materials")), 2)
+            with self.assertRaisesRegex(ValueError, "no longer exists"):
+                app.create_order(db, self.manual_payload(material_id=copper, pickup_at="2030-02-07T08:00", unloading_arrive_at="2030-02-08T15:00"))
+
+    def test_deca_document_pdf_and_qr(self):
+        import deca, qr
+        with connect(self.database) as db:
+            iron = app.save_material(db, {"code": "21", "name": "XATARRA"})
+            shipper = app.save_master(db, "locations", {"company": "Ferimet S.L.U", "city": "Castellbisbal", "postal_code": "08755",
+                                                        "country": "Spain", "address": "Calle Ferralla, 12", "nif": "b 17327610"})
+            order_id = app.create_order(db, self.manual_payload(material_id=iron))
+            # Everything missing is reported at once.
+            with self.assertRaises(ValueError) as missing:
+                deca.prepare(db, {"order_id": order_id, "shipper_id": shipper})
+            for text in ("company name and NIF in Settings", "enter the weight loaded"):
+                self.assertIn(text, str(missing.exception))
+            with self.assertRaisesRegex(ValueError, "between 1 and 60000"):
+                app.create_order(db, self.manual_payload(id=order_id, material_id=iron, loading_weight_kg="-3"))
+            app.create_order(db, self.manual_payload(id=order_id, material_id=iron, loading_weight_kg="25560"))
+            deca.save_settings(db, {"carrier_name": "Carrier Test SL", "carrier_nif": "b 00000000"})
+            with self.assertRaisesRegex(ValueError, "Generate the DeCA"):
+                deca.pdf(db, order_id)
+            first = deca.prepare(db, {"order_id": order_id, "shipper_id": shipper, "notes": "Big bags"})
+            again = deca.prepare(db, {"order_id": order_id, "shipper_id": shipper})
+            self.assertEqual(first["id"], again["id"])  # the identifier never changes
+            self.assertRegex(first["id"], r"^[0-9a-f]{32}$")
+            doc = deca.document(db, order_id)
+            name, body = deca.pdf(db, order_id)
+        rows = dict(doc["rows"])
+        self.assertEqual(rows["Cargador"], "Ferimet S.L.U (NIF B17327610)")
+        self.assertEqual(rows["Domicilio cargador"], "Calle Ferralla, 12, 08755 Castellbisbal, España")
+        self.assertEqual(rows["Transportista Efectivo"], "Carrier Test SL (NIF B00000000)")
+        self.assertTrue(rows["1. Carga"].endswith("— XATARRA, 25.560 kg"))
+        self.assertTrue(rows["2. Descarga"].endswith("— XATARRA, 25.560 kg"))
+        self.assertEqual(doc["notes"], "—")  # observations were cleared by the second call
+        self.assertTrue(name.endswith(".pdf") and body.startswith(b"%PDF-1.4") and body.rstrip().endswith(b"%%EOF"))
+        self.assertIn(b"(Documento de Control \\(DeCA\\)) Tj", body)
+        self.assertIn(first["id"].encode(), body)
+        self.assertIn("Cargador: Ferimet S.L.U (NIF B17327610)", deca.qr_text(doc))
+        # Two loadings, a partial unloading, then the rest at the final unloading.
+        with connect(self.database) as db:
+            copper = app.save_material(db, {"code": "04", "name": "COBRE"})
+            c = app.save_master(db, "locations", {"company": "Extra", "city": "Lleida", "postal_code": "25001", "country": "Spain"})
+            multi = app.create_order(db, self.manual_payload(pickup_at="2030-03-07T08:00", unloading_arrive_at="2030-03-08T15:00",
+                material_id=iron, loading_weight_kg="12000",
+                via=[{"kind": "Loading", "location_id": c, "handling_hours": 1, "arrive_at": "2030-03-07T12:00", "material_id": copper, "weight_kg": "8000"},
+                     {"kind": "Unloading", "location_id": c, "handling_hours": 1, "arrive_at": "2030-03-07T16:00", "weight_kg": "5000"}]))
+            lines = [value for label, value in deca.document(db, multi, shipper)["rows"] if label[0].isdigit()]
+        self.assertEqual([line.split(" — ")[1] for line in lines],
+                         ["XATARRA, 12.000 kg", "COBRE, 8.000 kg", "XATARRA + COBRE, 5.000 kg", "XATARRA + COBRE, 15.000 kg"])
+        # Known QR: "hello" in byte mode, level M, version 1 (checked against the qrcode library).
+        self.assertEqual(len(qr.matrix("hello")), 21)
+
+    def test_itv_manual_add_edit_validation_delete(self):
+        with connect(self.database) as db:
+            itv_id = app.save_itv(db, {"kind": "Remolque", "plate": "r0561bcf", "expires_on": "2026-12-01"})
+            self.assertEqual(app.item(db, "itv_vehicles", itv_id)["plate"], "R0561BCF")
+            with self.assertRaisesRegex(ValueError, "already in the ITV list"):
+                app.save_itv(db, {"kind": "Remolque", "plate": "R0561BCF"})
+            with self.assertRaisesRegex(ValueError, "Tractora or Remolque"):
+                app.save_itv(db, {"kind": "Car", "plate": "X"})
+            with self.assertRaisesRegex(ValueError, "valid expiry date"):
+                app.save_itv(db, {"kind": "Remolque", "plate": "R1", "expires_on": "soon"})
+            app.save_itv(db, {"id": itv_id, "kind": "Remolque", "plate": "R0561BCF", "expires_on": "", "expiry_text": "CADUCADO"})
+            saved = app.item(db, "itv_vehicles", itv_id)
+            self.assertEqual((saved["expires_on"], saved["expiry_text"]), (None, "CADUCADO"))
+            app.delete_itv(db, {"id": itv_id})
+            self.assertEqual(rows(db, "itv_vehicles"), [])
 
     def test_nearby_companies_rank_by_distance_with_history_and_contacts(self):
         with connect(self.database) as db:

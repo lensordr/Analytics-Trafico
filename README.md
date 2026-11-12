@@ -147,6 +147,24 @@ required, otherwise only the same city). Each company shows its type, contact
 details, notes, load history (how many loads, where they went) and the last
 logged contact. “Log contact” records the result of a call. No live GPS.
 
+## Materials
+
+The Materials tab holds what you load: your own code, the name, and an optional
+LER code (European waste list, for waste documents). Codes may repeat in the
+source list, so duplicates are flagged but not blocked. Each loading stop
+(including extra loadings) can name the material; the stop keeps the material
+text, so deleting a material does not change past orders.
+
+## Documento de Control (DeCA)
+
+Order detail → “DeCA” builds the Documento de Control as a one-page PDF with a QR
+code. It needs: your company name and NIF (Settings & backup), the shipper's NIF
+(Saved locations), and the material and weight of every loading stop. Unloading
+weights are optional: empty means everything still on the truck. The identifier
+is assigned once per order; the PDF always reflects the current order data. The
+QR code contains the document text itself (no link), so it can be read offline.
+`qr.py` is a small standard-library QR encoder (byte mode, level M).
+
 ## HERE integration (optional)
 
 Create your own HERE API key with Geocoding & Search and Routing access. In the
