@@ -885,7 +885,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options","nosniff")
         self.send_header("Content-Security-Policy","default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def valid_host(self):
         local = {f"127.0.0.1:{self.server.server_port}",f"localhost:{self.server.server_port}"}
@@ -964,6 +965,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def signed_in(self):
         return self.auth.valid(self.headers.get("Cookie"))
+
+    def do_HEAD(self):
+        # Uptime monitors (UptimeRobot) check with HEAD: same answer as GET, without the body.
+        path = urlsplit(self.path).path
+        if path == "/healthz" and self.valid_host():
+            return self.send_body(200,{"ok":True})
+        return self.send_body(405,{"error":"Use GET"})
 
     def do_GET(self):
         if not self.valid_host():

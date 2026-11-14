@@ -808,6 +808,8 @@ class DispatchTests(unittest.TestCase):
         try:
             # Health check for the uptime monitor: no login, no database.
             self.assertEqual(call("GET","/healthz")[0],200)
+            status,headers,body=call("HEAD","/healthz")  # UptimeRobot checks with HEAD
+            self.assertEqual((status,body),(200,b""))
             # Not signed in: pages go to the login page, the API answers 401, the stylesheet still loads.
             status,headers,_=call("GET","/")
             self.assertEqual((status,headers["Location"]),(303,"/login"))
