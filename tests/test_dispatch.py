@@ -734,6 +734,60 @@ class DispatchTests(unittest.TestCase):
             server.server_close()
             thread.join()
 
+    def test_driver_link_page_confirms_next_stop_only(self):
+        from auth import Auth
+        import deca, http.client
+        with connect(self.database) as db:
+            order_id = app.create_order(db, self.manual_payload())
+            self.assertEqual(app.driver_link(db, {"order_id": order_id})["url"], "")  # no online address yet
+            deca.save_settings(db, {"public_url": "https://example.onrender.com/"})
+            self.assertEqual(deca.settings(db)["carrier_name"], "")  # other settings untouched
+            link = app.driver_link(db, {"order_id": order_id})
+            self.assertEqual(app.driver_link(db, {"order_id": order_id})["token"], link["token"])  # same link every time
+        self.assertEqual(link["url"], "https://example.onrender.com/s/" + link["token"])
+        server = app.ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)
+        server.database = self.database
+        server.auth = Auth("dispatcher-password", "secret")  # online: dispatcher pages need login, the driver page does not
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        port = server.server_port
+        def call(method, path, body=None):
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+            connection.request(method, path, body=body, headers={"Host": f"127.0.0.1:{port}", "Content-Type": "application/x-www-form-urlencoded"})
+            response = connection.getresponse()
+            data = response.read().decode()
+            connection.close()
+            return response.status, dict(response.getheaders()), data
+        token = link["token"]
+        try:
+            status, _, page = call("GET", f"/s/{token}")
+            self.assertEqual(status, 200)
+            self.assertIn("AM ÎNCĂRCAT", page)
+            self.assertIn("google.com/maps", page)
+            self.assertEqual(call("GET", "/s/not-a-real-token")[0], 404)
+            self.assertIn("HE CARGADO", call("GET", f"/s/{token}?l=es")[2])
+            # Two taps: the button asks "Confirmi?", then the form confirms.
+            self.assertIn("DA, CONFIRM", call("GET", f"/s/{token}?c=1")[2])
+            # Only the next stop can be confirmed.
+            self.assertEqual(call("POST", f"/s/{token}", b"seq=2&l=ro")[0], 303)
+            with connect(self.database) as db:
+                self.assertEqual([s["status"] for s in app.order_stop_rows(db, order_id)], ["Planned", "Planned"])
+            status, headers, _ = call("POST", f"/s/{token}", b"seq=1&l=ro")
+            self.assertEqual((status, headers["Location"]), (303, f"/s/{token}?l=ro&ok=1"))
+            self.assertIn("AM DESCĂRCAT", call("GET", f"/s/{token}?l=ro&ok=1")[2])
+            call("POST", f"/s/{token}", b"seq=1&l=ro")  # double tap: ignored
+            call("POST", f"/s/{token}", b"seq=2&l=ro")
+            with connect(self.database) as db:
+                self.assertEqual([s["status"] for s in app.order_stop_rows(db, order_id)], ["Done", "Done"])
+                self.assertEqual(app.item(db, "orders", order_id)["status"], "Completed")
+            self.assertIn("finalizată", call("GET", f"/s/{token}")[2])
+            # The dispatcher API still needs the password.
+            self.assertEqual(call("GET", "/api/state")[0], 401)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
     def test_online_login_session_and_lockout(self):
         from auth import Auth
         import http.client

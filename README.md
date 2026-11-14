@@ -169,6 +169,15 @@ Render settings: Build `pip install -r requirements.txt`, Start `python app.py`,
 Health check path `/healthz` (also used by the uptime monitor). Python version
 comes from `.python-version`. Without `PORT` (your own computer) nothing changes.
 
+## Driver confirmation page
+
+“💬 WhatsApp” on an order adds a secret link (`/s/<token>`, one per order) to
+the message. The driver opens it without logging in and sees the stops, Google
+Maps buttons and one big button for the next step (loaded / swapped / unloaded),
+confirmed with a second tap. Only the next stop of that order can be confirmed;
+the dispatcher can undo it in the app. The link uses the online address saved in
+Settings (filled in automatically by the online app).
+
 ## Documento de Control (DeCA)
 
 Order detail → “DeCA” builds the Documento de Control as a one-page PDF with a QR

@@ -421,6 +421,11 @@ def initialize(target):
             if column not in columns:
                 db.execute(f"ALTER TABLE orders ADD COLUMN {column} {kind}")
         db.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')")
+        # Secret link for the driver page (/s/<token>), created when the WhatsApp message is prepared.
+        columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(orders)")}
+        if "driver_token" not in columns:
+            db.execute("ALTER TABLE orders ADD COLUMN driver_token TEXT")
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS orders_driver_token ON orders(driver_token)")
         # Existing two-stop orders become a loading stop and an unloading stop (once).
         db.execute("""INSERT INTO order_stops (order_id, seq, kind, location_id, planned_at, planned_end_at,
                 handling_hours, status, done_at)

@@ -16,6 +16,7 @@ from auth import Auth
 import base64
 import config
 import deca
+import driver
 from planner import Clock, UTC, ZONE, number, parse_time, route_plan, stamp, week_key
 import routing
 from storage import TursoReplica, backup_to, begin_write, connect, initialize, reserve_id, rows
@@ -841,6 +842,29 @@ def save_material(db, data):
                       tuple(values.values())).lastrowid
 
 
+def driver_link(db, data):
+    """Secret link for the driver page of an order (created once, reused in every message)."""
+    order = item(db, "orders", data.get("order_id"))
+    if order["status"] == "Cancelled":
+        raise ValueError("This order is cancelled.")
+    token = order["driver_token"]
+    if not token:
+        token = secrets.token_urlsafe(16)
+        db.execute("UPDATE orders SET driver_token=? WHERE id=?", (token, order["id"]))
+    base = deca.settings(db)["public_url"]
+    return {"token": token, "url": f"{base}/s/{token}" if base else ""}
+
+
+def driver_order(db, token):
+    row = db.execute("SELECT * FROM orders WHERE driver_token=?", (token,)).fetchone() if token else None
+    if row is None:
+        return None, [], {}
+    order = {key.lower(): row[key] for key in row.keys()}
+    stops = order_stop_rows(db, order["id"])
+    places = {stop["location_id"]: item(db, "locations", stop["location_id"]) for stop in stops}
+    return order, stops, places
+
+
 def delete_material(db, data):
     material = item(db, "materials", data.get("id"))
     used = db.execute("SELECT count(*) FROM order_stops WHERE material_id=?", (material["id"],)).fetchone()[0]
@@ -907,6 +931,37 @@ class Handler(BaseHTTPRequestHandler):
         time.sleep(1)
         return self.login_page("Wrong password.",401)
 
+    # ---- driver page: the secret link is the only key; one order, next stop only
+    def driver_get(self,token,message="",error="",lang=None):
+        query = dict(parse_qsl(urlsplit(self.path).query))
+        lang = driver.lang_of(lang or query.get("l"))
+        with connect(self.server.database) as db:
+            order, stops, places = driver_order(db, token)
+        if order is None:
+            return self.send_body(404, driver.missing_page(lang), "text/html; charset=utf-8")
+        if query.get("ok") and not message and not error:
+            message = driver.TEXT[lang]["saved"]
+        confirm = int(query["c"]) if query.get("c", "").isdigit() else None
+        self.send_body(200, driver.render(token, order, stops, places, lang, confirm, message, error), "text/html; charset=utf-8")
+
+    def driver_post(self,token):
+        length = int(self.headers.get("Content-Length","0") or 0)
+        form = dict(parse_qsl(self.rfile.read(length).decode("utf-8","replace"))) if 0 < length < 2000 else {}
+        lang = driver.lang_of(form.get("l"))
+        with connect(self.server.database) as db:
+            order, stops, _ = driver_order(db, token)
+            if order is None:
+                return self.send_body(404, driver.missing_page(lang), "text/html; charset=utf-8")
+            next_stop = next((s for s in stops if s["status"] != "Done"), None)
+            if order["status"] == "Cancelled" or next_stop is None or str(next_stop["seq"]) != form.get("seq"):
+                # Double tap or an old page: nothing to confirm, just show the current state.
+                return self.redirect(f"/s/{token}?l={lang}")
+            try:
+                set_stop_status(db, {"order_id": order["id"], "seq": next_stop["seq"]})
+            except ValueError as error:
+                return self.driver_get(token, error=str(error), lang=lang)
+        return self.redirect(f"/s/{token}?l={lang}&ok=1")
+
     def signed_in(self):
         return self.auth.valid(self.headers.get("Cookie"))
 
@@ -920,7 +975,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.redirect("/") if self.auth.enabled and self.signed_in() else self.login_page() if self.auth.enabled else self.redirect("/")
         if path == "/logout":
             return self.redirect("/login",self.auth.clear_cookie())
-        if path != "/style.css" and not self.signed_in():
+        if path.startswith("/s/"):
+            return self.driver_get(path[3:])
+        if path not in ("/style.css","/driver.css") and not self.signed_in():
             return self.send_body(401,{"error":"Please sign in again."}) if path.startswith("/api/") else self.redirect("/login")
         if path == "/api/state":
             with connect(self.server.database) as db:
@@ -959,7 +1016,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control","no-store")
             self.end_headers()
             return self.wfile.write(body)
-        files = {"/":("index.html","text/html; charset=utf-8"),"/app.js":("app.js","text/javascript; charset=utf-8"),"/analytics.js":("analytics.js","text/javascript; charset=utf-8"),"/search-select.js":("search-select.js","text/javascript; charset=utf-8"),"/style.css":("style.css","text/css; charset=utf-8")}
+        files = {"/":("index.html","text/html; charset=utf-8"),"/app.js":("app.js","text/javascript; charset=utf-8"),"/analytics.js":("analytics.js","text/javascript; charset=utf-8"),"/search-select.js":("search-select.js","text/javascript; charset=utf-8"),"/style.css":("style.css","text/css; charset=utf-8"),"/driver.css":("driver.css","text/css; charset=utf-8")}
         if path not in files:
             return self.send_body(404,{"error":"Page not found"})
         filename,mime = files[path]
@@ -968,6 +1025,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.valid_host() and urlsplit(self.path).path == "/login":
             return self.handle_login()
+        if self.valid_host() and urlsplit(self.path).path.startswith("/s/"):
+            return self.driver_post(urlsplit(self.path).path[3:])
         if self.valid_host() and not self.signed_in():
             return self.send_body(401,{"error":"Please sign in again."})
         if not self.valid_host() or not secrets.compare_digest(self.headers.get("X-CSRF-Token",""),TOKEN):
@@ -1026,6 +1085,8 @@ class Handler(BaseHTTPRequestHandler):
                     result = deca.save_settings(db,data)
                 elif path == "/api/deca":
                     result = deca.prepare(db,data)
+                elif path == "/api/driver-link":
+                    result = driver_link(db,data)
                 elif path == "/api/materials":
                     result = {"id":save_material(db,data)}
                 elif path == "/api/material-delete":
@@ -1091,6 +1152,12 @@ def main():
         server.database = database
         server.auth = Auth(password, os.environ.get("SESSION_SECRET","").strip() or None)
         server.public_hosts = {host.strip() for host in (os.environ.get("PUBLIC_HOST",""), os.environ.get("RENDER_EXTERNAL_HOSTNAME","")) if host.strip()}
+        # Online: remember the public address, so driver links work from any copy of the app.
+        public = os.environ.get("PUBLIC_HOST","").strip() or os.environ.get("RENDER_EXTERNAL_HOSTNAME","").strip()
+        if online and public:
+            with connect(database) as db:
+                if deca.settings(db)["public_url"] != f"https://{public}":
+                    deca.save_settings(db, {"public_url": f"https://{public}"})
         print(f"Daily Traking MalcomTrans: http://127.0.0.1:{server.server_port}",flush=True)
         print(f"Database: {database}",flush=True)
         print("Dispatch clock: Europe/Madrid. Ctrl+C to stop.",flush=True)

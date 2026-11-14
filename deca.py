@@ -11,7 +11,7 @@ import secrets
 from planner import UTC, ZONE, parse_time, stamp
 import qr
 
-SETTINGS = {"carrier_name": "", "carrier_nif": ""}
+SETTINGS = {"carrier_name": "", "carrier_nif": "", "public_url": ""}
 COUNTRY_ES = {"spain": "España", "france": "Francia", "italy": "Italia", "germany": "Alemania",
               "portugal": "Portugal", "netherlands": "Países Bajos", "belgium": "Bélgica",
               "luxembourg": "Luxemburgo", "poland": "Polonia", "slovakia": "Eslovaquia", "switzerland": "Suiza"}
@@ -28,10 +28,14 @@ def settings(db):
 def save_settings(db, data):
     values = {}
     for key in SETTINGS:
+        if key not in data:
+            continue  # each form saves only its own fields
         value = str(data.get(key, "")).strip()
         if len(value) > 200:
             raise ValueError("Company name and NIF: maximum 200 characters.")
-        values[key] = value.upper().replace(" ", "") if key == "carrier_nif" else value
+        if key == "public_url" and value and not value.startswith("https://"):
+            raise ValueError("The public address must start with https://")
+        values[key] = value.upper().replace(" ", "") if key == "carrier_nif" else value.rstrip("/") if key == "public_url" else value
     for key, value in values.items():
         db.execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                    (key, value))
