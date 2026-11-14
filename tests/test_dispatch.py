@@ -734,6 +734,64 @@ class DispatchTests(unittest.TestCase):
             server.server_close()
             thread.join()
 
+    def test_online_login_session_and_lockout(self):
+        from auth import Auth
+        import http.client
+        server=app.ThreadingHTTPServer(("127.0.0.1",0),app.Handler)
+        server.database=self.database
+        server.auth=Auth("correct horse battery","fixed-secret")
+        server.public_hosts={"malcomtrans.onrender.com"}
+        thread=threading.Thread(target=server.serve_forever,daemon=True)
+        thread.start()
+        port=server.server_port
+        def call(method,path,body=None,headers=None,host=None):
+            connection=http.client.HTTPConnection("127.0.0.1",port,timeout=10)
+            connection.request(method,path,body=body,headers={"Host":host or f"127.0.0.1:{port}",**(headers or {})})
+            response=connection.getresponse()
+            data=response.read()
+            connection.close()
+            return response.status,dict(response.getheaders()),data
+        try:
+            # Health check for the uptime monitor: no login, no database.
+            self.assertEqual(call("GET","/healthz")[0],200)
+            # Not signed in: pages go to the login page, the API answers 401, the stylesheet still loads.
+            status,headers,_=call("GET","/")
+            self.assertEqual((status,headers["Location"]),(303,"/login"))
+            self.assertEqual(call("GET","/api/state")[0],401)
+            self.assertEqual(call("POST","/api/trailers",b"{}",{"Content-Type":"application/json"})[0],401)
+            self.assertEqual(call("GET","/style.css")[0],200)
+            self.assertIn(b"Sign in",call("GET","/login")[2])
+            # The public host is accepted, any other host is refused.
+            self.assertEqual(call("GET","/healthz",host="malcomtrans.onrender.com")[0],200)
+            self.assertEqual(call("GET","/healthz",host="evil.example")[0],403)
+            form={"Content-Type":"application/x-www-form-urlencoded"}
+            with patch.object(app.time,"sleep"):
+                status,_,page=call("POST","/login",b"password=wrong",form)
+                self.assertEqual(status,401)
+                self.assertIn(b"Wrong password",page)
+                status,headers,_=call("POST","/login",b"password=correct+horse+battery",{**form,"X-Forwarded-Proto":"https"})
+                self.assertEqual((status,headers["Location"]),(303,"/"))
+                cookie=headers["Set-Cookie"]
+                self.assertIn("HttpOnly",cookie)
+                self.assertIn("Secure",cookie)
+                session={"Cookie":cookie.split(";")[0]}
+                status,_,body=call("GET","/api/state",headers=session)
+                self.assertEqual(status,200)
+                self.assertTrue(json.loads(body)["auth"])
+                # A tampered cookie is rejected.
+                self.assertEqual(call("GET","/api/state",headers={"Cookie":session["Cookie"][:-1]+"0"})[0],401)
+                # Too many wrong passwords from one address: blocked, even with the right one.
+                for _ in range(8):
+                    call("POST","/login",b"password=nope",{**form,"X-Forwarded-For":"203.0.113.9"})
+                self.assertEqual(call("POST","/login",b"password=correct+horse+battery",{**form,"X-Forwarded-For":"203.0.113.9"})[0],429)
+            status,headers,_=call("GET","/logout",headers=session)
+            self.assertEqual((status,headers["Location"]),(303,"/login"))
+            self.assertIn("Max-Age=0",headers["Set-Cookie"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
 
 if __name__=="__main__":
     unittest.main()

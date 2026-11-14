@@ -155,6 +155,20 @@ source list, so duplicates are flagged but not blocked. Each loading stop
 (including extra loadings) can name the material; the stop keeps the material
 text, so deleting a material does not change past orders.
 
+## Online (Render)
+
+When the `PORT` environment variable is set (Render sets it), the app listens on
+all interfaces and requires a dispatcher password. Environment variables:
+
+- `APP_PASSWORD` — dispatcher password, at least 10 characters (required online)
+- `SESSION_SECRET` — long random text; keeps you signed in across restarts
+- `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` — the database
+- `RENDER_EXTERNAL_HOSTNAME` is set by Render; other domains go in `PUBLIC_HOST`
+
+Render settings: Build `pip install -r requirements.txt`, Start `python app.py`,
+Health check path `/healthz` (also used by the uptime monitor). Python version
+comes from `.python-version`. Without `PORT` (your own computer) nothing changes.
+
 ## Documento de Control (DeCA)
 
 Order detail → “DeCA” builds the Documento de Control as a one-page PDF with a QR

@@ -141,3 +141,14 @@
 .deca-checks .ok{color:var(--muted)}.deca-checks .missing{color:#b42318;font-weight:600}.deca-checks .info{color:var(--muted);font-size:12px}
 .deca-checks small{font-weight:400}
 #deca-result .btn{margin-top:8px}
+
+.wa-warning{color:#b42318;font-weight:600}
+#wa-form textarea{font-family:inherit;line-height:1.45}
+
+.login-page{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:16px;background:#f5f7f5}
+.login-box{width:100%;max-width:380px;height:auto;min-height:0;flex:0 0 auto;align-self:center;display:flex;flex-direction:column;gap:12px}
+.login-brand{color:inherit;text-decoration:none;margin-bottom:6px}
+.login-box h1{margin:0;font-size:24px}
+.login-form{display:flex;flex-direction:column;gap:14px}
+.login-form .btn{width:100%;justify-content:center;padding:12px}
+.logout-link{text-decoration:none;margin-top:8px}

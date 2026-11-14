@@ -9,8 +9,10 @@ import secrets
 import socket
 import sqlite3
 import sys
+import time
 from urllib.parse import parse_qsl, urlsplit
 
+from auth import Auth
 import base64
 import config
 import deca
@@ -862,19 +864,71 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def valid_host(self):
-        return self.headers.get("Host") in {f"127.0.0.1:{self.server.server_port}",f"localhost:{self.server.server_port}"}
+        local = {f"127.0.0.1:{self.server.server_port}",f"localhost:{self.server.server_port}"}
+        return self.headers.get("Host") in local | getattr(self.server,"public_hosts",set())
+
+    # ---- login (only when APP_PASSWORD is set, i.e. the online version)
+    @property
+    def auth(self):
+        return getattr(self.server,"auth",None) or Auth()
+
+    def client_address_text(self):
+        # Behind Render's proxy the visitor's address is the first X-Forwarded-For entry.
+        forwarded = self.headers.get("X-Forwarded-For","")
+        return forwarded.split(",")[0].strip() or self.client_address[0]
+
+    def https(self):
+        return self.headers.get("X-Forwarded-Proto","") == "https"
+
+    def redirect(self,location,cookie=None):
+        self.send_response(303)
+        self.send_header("Location",location)
+        if cookie:
+            self.send_header("Set-Cookie",cookie)
+        self.send_header("Cache-Control","no-store")
+        self.send_header("Content-Length","0")
+        self.end_headers()
+
+    def login_page(self,message="",status=200):
+        page = (ROOT/"static"/"login.html").read_text(encoding="utf-8")
+        note = f'<div class="notice warning">{message}</div>' if message else ""
+        self.send_body(status,page.replace("<!--MESSAGE-->",note),"text/html; charset=utf-8")
+
+    def handle_login(self):
+        address = self.client_address_text()
+        if self.auth.blocked(address):
+            return self.login_page("Too many wrong passwords. Wait 15 minutes and try again.",429)
+        length = int(self.headers.get("Content-Length","0") or 0)
+        if not 0 < length < 2000:
+            return self.login_page("Enter the password.",400)
+        password = dict(parse_qsl(self.rfile.read(length).decode("utf-8","replace"))).get("password","")
+        if self.auth.check(address,password):
+            return self.redirect("/",self.auth.new_cookie(self.https()))
+        time.sleep(1)
+        return self.login_page("Wrong password.",401)
+
+    def signed_in(self):
+        return self.auth.valid(self.headers.get("Cookie"))
 
     def do_GET(self):
         if not self.valid_host():
             return self.send_body(403,{"error":"Invalid host"})
         path = urlsplit(self.path).path
+        if path == "/healthz":
+            return self.send_body(200,{"ok":True})
+        if path == "/login":
+            return self.redirect("/") if self.auth.enabled and self.signed_in() else self.login_page() if self.auth.enabled else self.redirect("/")
+        if path == "/logout":
+            return self.redirect("/login",self.auth.clear_cookie())
+        if path != "/style.css" and not self.signed_in():
+            return self.send_body(401,{"error":"Please sign in again."}) if path.startswith("/api/") else self.redirect("/login")
         if path == "/api/state":
             with connect(self.server.database) as db:
                 state = {key:rows(db,key) for key in ("drivers","trucks","trailers","locations","orders")}
                 state["itv"] = rows(db,"itv_vehicles")
                 state["materials"] = rows(db,"materials")
                 state["settings"] = deca.settings(db)
-            state.update(token=TOKEN,here_configured=routing.configured(),now=stamp(datetime.now(UTC)),timezone="Europe/Madrid",
+            state.update(token=TOKEN,auth=self.auth.enabled,here_configured=routing.configured(),now=stamp(datetime.now(UTC)),timezone="Europe/Madrid",
                          storage="turso" if isinstance(self.server.database,TursoReplica) else "sqlite")
             return self.send_body(200,state)
         if path == "/api/deca.pdf":
@@ -912,6 +966,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_body(200,(ROOT/"static"/filename).read_bytes(),mime)
 
     def do_POST(self):
+        if self.valid_host() and urlsplit(self.path).path == "/login":
+            return self.handle_login()
+        if self.valid_host() and not self.signed_in():
+            return self.send_body(401,{"error":"Please sign in again."})
         if not self.valid_host() or not secrets.compare_digest(self.headers.get("X-CSRF-Token",""),TOKEN):
             return self.send_body(403,{"error":"Please reload the app and try again."})
         try:
@@ -1016,14 +1074,23 @@ def main():
     else:
         database = args.database or ROOT/"data"/"malcomtrans.sqlite3"
     initialize(database)
+    # Online (Render sets PORT): listen on all interfaces, only with a dispatcher password.
+    online = bool(os.environ.get("PORT"))
+    password = os.environ.get("APP_PASSWORD","").strip() or None
+    if online and (not password or len(password) < 10):
+        print("APP_PASSWORD (at least 10 characters) is required when the app runs online.",flush=True)
+        sys.exit(1)
+    port = int(os.environ.get("PORT") or args.port)
     try:
-        server = Server(("127.0.0.1",args.port),Handler)
+        server = Server(("0.0.0.0" if online else "127.0.0.1",port),Handler)
     except OSError:
         print(f"Port {args.port} is already in use: MalcomTrans (or another program) is already running.",flush=True)
         print(f"Open http://127.0.0.1:{args.port} or close the other MalcomTrans window first.",flush=True)
         sys.exit(1)
     with server:
         server.database = database
+        server.auth = Auth(password, os.environ.get("SESSION_SECRET","").strip() or None)
+        server.public_hosts = {host.strip() for host in (os.environ.get("PUBLIC_HOST",""), os.environ.get("RENDER_EXTERNAL_HOSTNAME","")) if host.strip()}
         print(f"Daily Traking MalcomTrans: http://127.0.0.1:{server.server_port}",flush=True)
         print(f"Database: {database}",flush=True)
         print("Dispatch clock: Europe/Madrid. Ctrl+C to stop.",flush=True)
