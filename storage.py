@@ -421,6 +421,20 @@ def initialize(target):
                              ("deca_notes", "TEXT NOT NULL DEFAULT ''"), ("deca_created_at", "TEXT")):
             if column not in columns:
                 db.execute(f"ALTER TABLE orders ADD COLUMN {column} {kind}")
+        # Client tariffs: price of a route (from one saved location to another) for the client who pays.
+        db.execute("""CREATE TABLE IF NOT EXISTS tariffs (
+            id INTEGER PRIMARY KEY, client_id INTEGER NOT NULL REFERENCES locations(id),
+            from_id INTEGER NOT NULL REFERENCES locations(id), to_id INTEGER NOT NULL REFERENCES locations(id),
+            basis TEXT NOT NULL, rate REAL NOT NULL, km REAL NOT NULL DEFAULT 0, price_date TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, source_id TEXT)""")
+        db.execute("CREATE INDEX IF NOT EXISTS tariffs_route ON tariffs(from_id, to_id)")
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS tariffs_source ON tariffs(source_id)")
+        # Who pays for the order and its price (a copy of the tariff's basis and rate, or a manual total).
+        columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(orders)")}
+        for column, kind in (("client_id", "INTEGER REFERENCES locations(id)"), ("tariff_id", "INTEGER REFERENCES tariffs(id)"),
+                             ("rate_basis", "TEXT NOT NULL DEFAULT ''"), ("rate", "REAL"), ("price_eur", "REAL")):
+            if column not in columns:
+                db.execute(f"ALTER TABLE orders ADD COLUMN {column} {kind}")
         db.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')")
         # Secret link for the driver page (/s/<token>), created when the WhatsApp message is prepared.
         columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(orders)")}
@@ -453,7 +467,7 @@ def initialize(target):
 
 
 def rows(db, table):
-    if table not in {"drivers", "trucks", "trailers", "locations", "orders", "itv_vehicles", "materials"}:
+    if table not in {"drivers", "trucks", "trailers", "locations", "orders", "itv_vehicles", "materials", "tariffs"}:
         raise ValueError("Unknown table")
     # Lower-case keys also cover backups restored from Turso, whose schema may say `PLAN`.
     result = [{key.lower(): row[key] for key in row.keys()}

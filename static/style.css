@@ -152,3 +152,16 @@
 .login-form{display:flex;flex-direction:column;gap:14px}
 .login-form .btn{width:100%;justify-content:center;padding:12px}
 .logout-link{text-decoration:none;margin-top:8px}
+/* Tariffs */
+.tariff-list{display:flex;flex-direction:column}
+.tariff-row{display:grid;grid-template-columns:minmax(120px,1fr) minmax(0,1.3fr) 14px minmax(0,1.3fr) 60px minmax(150px,1.1fr) auto;gap:12px;align-items:center;padding:9px 20px;border-top:1px solid var(--line);font-size:11px}
+.tariff-row:first-child{border-top:0}.tariff-row>*{min-width:0}.tariff-row.inactive{opacity:.55}
+.tariff-row small{display:block;color:var(--muted);font-size:10px;margin-top:2px}
+.tariff-client{font-weight:650}.tariff-arrow{color:var(--muted)}.tariff-km{color:var(--muted);font-size:10px}
+.tariff-choices{display:flex;flex-direction:column;gap:6px}
+.geo-option.chosen{border-color:#7fb069;background:#f3f9ee}
+.price-total{font-size:15px;font-weight:650;padding:6px 0}
+.picker-with-button{align-items:flex-end}.picker-with-button>.field{flex:1;margin:0}
+@media (max-width:900px){.tariff-row{grid-template-columns:minmax(0,1fr) 14px minmax(0,1fr)}.tariff-client,.tariff-rate,.tariff-km,.tariff-row .actions{grid-column:1 / -1}}
+.tariff-choices .geo-option{margin:0}.tariff-choices .geo-option>*{display:block}
+.search-select-menu{min-width:min(460px,80vw)}

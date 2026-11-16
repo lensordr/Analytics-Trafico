@@ -18,7 +18,7 @@ def identity(value):
 
 
 def item(db, table, value):
-    if table not in {"drivers", "trucks", "trailers", "locations", "orders", "itv_vehicles", "materials"}:
+    if table not in {"drivers", "trucks", "trailers", "locations", "orders", "itv_vehicles", "materials", "tariffs"}:
         raise ValueError("Invalid item type.")
     row = db.execute(f"SELECT * FROM {table} WHERE id = ?", (identity(value),)).fetchone()
     if row is None:

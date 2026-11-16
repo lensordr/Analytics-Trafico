@@ -117,6 +117,40 @@ class DispatchTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "no longer exists"):
                 app.create_order(db, self.manual_payload(material_id=copper, pickup_at="2030-02-07T08:00", unloading_arrive_at="2030-02-08T15:00"))
 
+    def test_tariffs_and_order_price(self):
+        from tariffs import order_amount
+        with connect(self.database) as db:
+            client = app.save_master(db, "locations", {"company": "Ferimet", "city": "Granollers", "postal_code": "08401", "country": "Spain"})
+            tariff = app.save_tariff(db, {"client_id": client, "from_id": self.a, "to_id": self.b, "basis": "loading_t",
+                                          "rate": "5.78", "km": "35", "price_date": "2026-02-17"})
+            with self.assertRaisesRegex(ValueError, "already has an active tariff"):
+                app.save_tariff(db, {"client_id": client, "from_id": self.a, "to_id": self.b, "basis": "loading_t", "rate": 6})
+            with self.assertRaisesRegex(ValueError, "rate must be"):
+                app.save_tariff(db, {"client_id": client, "from_id": self.b, "to_id": self.a, "basis": "trip", "rate": ""})
+            with self.assertRaisesRegex(ValueError, "Choose how"):
+                app.save_tariff(db, {"client_id": client, "from_id": self.b, "to_id": self.a, "basis": "km", "rate": 1})
+            order_id = app.create_order(db, self.manual_payload(tariff_id=tariff, rate_basis="loading_t", rate="5.78",
+                                                                loading_weight_kg=24000))
+            order = app.item(db, "orders", order_id)
+            stops = app.order_stop_rows(db, order_id)
+        # The client comes from the tariff; the order keeps its own copy of the rate.
+        self.assertEqual((order["client_id"], order["tariff_id"], order["rate_basis"], order["rate"]), (client, tariff, "loading_t", 5.78))
+        self.assertEqual(order_amount(order, stops), 138.72)
+        stops[-1]["weight_kg"] = 23000
+        self.assertEqual(order_amount({**order, "rate_basis": "unloading_t"}, stops), 132.94)
+        self.assertEqual(order_amount({**order, "rate_basis": "trip", "rate": 750}, stops), 750)
+        self.assertIsNone(order_amount({**order, "rate_basis": "hour", "rate": 60}, stops))
+        self.assertEqual(order_amount({**order, "price_eur": 99.5}, stops), 99.5)
+        with connect(self.database) as db:
+            self.assertIn("keep their price", app.delete_tariff(db, {"id": tariff})["message"])
+            order = app.item(db, "orders", order_id)
+            self.assertEqual((order["tariff_id"], order["rate"]), (None, 5.78))
+            other = app.save_master(db, "locations", {"company": "Other", "city": "Lleida", "postal_code": "25001", "country": "Spain"})
+            foreign = app.save_tariff(db, {"client_id": other, "from_id": self.a, "to_id": self.b, "basis": "trip", "rate": 100})
+            with self.assertRaisesRegex(ValueError, "another client"):
+                app.create_order(db, self.manual_payload(client_id=client, tariff_id=foreign, rate_basis="trip", rate=100,
+                                                         pickup_at="2030-02-07T08:00", unloading_arrive_at="2030-02-08T15:00"))
+
     def test_deca_document_pdf_and_qr(self):
         import deca, qr
         with connect(self.database) as db:

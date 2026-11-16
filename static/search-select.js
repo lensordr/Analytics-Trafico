@@ -9,10 +9,11 @@
      newLabel               — enables "+ Add new <newLabel> “typed text”"
      newField               — name of a hidden input that receives the typed text (created on save);
                               without it, choosing "Add new" fires a `search-select-new` event. */
+const searchNorm=text=>String(text||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
 function searchSelectField(label,name,entries,value,settings={}) {
   const selected=entries.find(entry=>String(entry.id)===String(value));
   const empty=settings.empty||'Unassigned';
-  const option=(entry,index)=>`<button type="button" role="option" id="search-${name}-${index}" class="search-select-option" data-search-id="${esc(entry.id)}" data-search-label="${esc(entry.label)}" data-search-value="${esc(entry.value??entry.label)}" data-search-terms="${esc((entry.label+' '+(entry.hint||'')).toLowerCase())}" aria-selected="${String(entry.id)===String(value)}"><strong>${esc(entry.label)}</strong>${entry.hint?`<small>${esc(entry.hint)}</small>`:''}</button>`;
+  const option=(entry,index)=>`<button type="button" role="option" id="search-${name}-${index}" class="search-select-option" data-search-id="${esc(entry.id)}" data-search-label="${esc(entry.label)}" data-search-value="${esc(entry.value??entry.label)}" data-search-terms="${esc(searchNorm(entry.label+' '+(entry.hint||'')))}" aria-selected="${String(entry.id)===String(value)}"><strong>${esc(entry.label)}</strong>${entry.hint?`<small>${esc(entry.hint)}</small>`:''}</button>`;
   const newOption=settings.newLabel?`<button type="button" role="option" id="search-${name}-new" class="search-select-option search-select-new" data-search-new data-search-terms="" hidden></button>`:'';
   const noResults=settings.noResults?esc(settings.noResults):settings.newLabel?`No match. Keep typing to add a new ${esc(settings.newLabel)}.`:'No matching registration. Add it to the directory first.';
   return `<div class="field"><label for="f-${name}">${esc(label)}</label><div class="search-select" data-search-select="${name}" ${settings.newLabel?`data-new-label="${esc(settings.newLabel)}"`:''}><input id="f-${name}" class="search-select-input" type="text" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="search-options-${name}" autocomplete="off" placeholder="${esc(settings.placeholder||'Search registrations…')}" value="${esc(selected?.label||'')}" ${settings.required?'required':''}><input type="hidden" data-search-hidden name="${name}"${settings.hiddenId?` id="${settings.hiddenId}"`:''}${settings.hiddenAttrs?' '+settings.hiddenAttrs:''} value="${esc(selected?.id||'')}">${settings.snapshotName?`<input type="hidden" name="${settings.snapshotName}" data-search-snapshot value="${esc(selected?.value??selected?.label??'')}">`:''}${settings.newField?`<input type="hidden" name="${settings.newField}" data-search-newvalue value="">`:''}<button type="button" class="search-select-toggle" aria-label="Show ${esc(label.toLowerCase())} options">⌄</button><div class="search-select-menu" role="listbox" id="search-options-${name}" hidden>${option({id:'',label:empty,value:''},0)}${entries.map((entry,index)=>option(entry,index+1)).join('')}${newOption}<p class="search-no-results" hidden>${noResults}</p></div></div></div>`;
@@ -34,9 +35,11 @@ function searchSelectOpen(wrapper,open=true) {
 function searchSelectFilter(wrapper,query) {
   const typed=query.trim();
   query=typed.toLowerCase();
+  // Every typed word must appear, in any order, accents ignored ("granollers ferimet").
+  const words=searchNorm(typed).split(' ').filter(Boolean);
   let visible=0,exact=false;
   for(const option of wrapper.querySelectorAll('.search-select-option:not([data-search-new])')) {
-    option.hidden=!!query&&!option.dataset.searchTerms.includes(query);
+    option.hidden=words.length>0&&!words.every(word=>option.dataset.searchTerms.includes(word));
     option.classList.remove('search-highlight');
     if(!option.hidden)visible++;
     if(option.dataset.searchId&&option.dataset.searchLabel.toLowerCase()===query)exact=true;

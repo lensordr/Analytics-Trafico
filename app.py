@@ -1,6 +1,6 @@
 """Daily Traking MalcomTrans: start the server (python app.py).
 
-The code lives in modules: common, masters, materials, orders, nearby, itv, driverlinks,
+The code lives in modules: common, masters, materials, tariffs, orders, nearby, itv, driverlinks,
 server, plus planner, storage, deca, driver, qr, xlsx, routing, upcoming, auth, config.
 """
 import argparse
@@ -20,6 +20,7 @@ from storage import TursoReplica, connect, initialize
 from common import *  # noqa: F401,F403
 from masters import *  # noqa: F401,F403
 from materials import *  # noqa: F401,F403
+from tariffs import *  # noqa: F401,F403
 from orders import *  # noqa: F401,F403
 from nearby import *  # noqa: F401,F403
 from itv import *  # noqa: F401,F403

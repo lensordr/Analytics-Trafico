@@ -7,6 +7,7 @@ import routing
 from common import identity, item, text
 from masters import selected_trailer
 from materials import material_label
+from tariffs import order_price
 from planner import Clock, UTC, ZONE, number, parse_time, route_plan, stamp, week_key
 from storage import begin_write, reserve_id, rows
 
@@ -264,6 +265,7 @@ def create_order(db, data):
                            for row in busy)
         raise ValueError(f"Truck, driver or trailer is already assigned: {detail}. "
                          "Plan the new loading after that time (or change the ETA of that order first).")
+    price = order_price(db, data, stops)
     lh, uh = stops[0]["handling_hours"], stops[-1]["handling_hours"]
     loading, unloading = stops[0]["location"], stops[-1]["location"]
     later_driver_orders = db.execute("SELECT * FROM orders WHERE driver_id=? AND status!='Cancelled' AND id!=?", (driver["id"],data.get("id",0))).fetchall()
@@ -276,7 +278,7 @@ def create_order(db, data):
               "available_at":plan["available_at"],"distance_km":route["distance_km"],"driving_hours":route["driving_hours"],
               "loading_hours":lh,"unloading_hours":uh,"route_source":route["source"],
               "route_details":json.dumps(route),"notes":text(data,"notes",False,5000),
-              "clock_input":json.dumps(initial),"plan":json.dumps(plan)}
+              "clock_input":json.dumps(initial),"plan":json.dumps(plan),**price}
     if data.get("id"):
         existing = item(db,"orders",data["id"])
         if existing["status"] != "Planned":

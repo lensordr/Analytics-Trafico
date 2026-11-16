@@ -23,6 +23,7 @@ from driverlinks import driver_link, driver_order
 from itv import delete_itv, import_itv, save_itv
 from masters import archive_master, restore_master, save_master
 from materials import delete_material, save_material
+from tariffs import delete_tariff, save_tariff
 from nearby import log_contact, nearby_companies
 from orders import build_plan, carry_clock, create_order, set_stop_status, update_stop_eta, uses_rules
 from planner import UTC, parse_time, stamp
@@ -169,6 +170,7 @@ class Handler(BaseHTTPRequestHandler):
                 state = {key:rows(db,key) for key in ("drivers","trucks","trailers","locations","orders")}
                 state["itv"] = rows(db,"itv_vehicles")
                 state["materials"] = rows(db,"materials")
+                state["tariffs"] = rows(db,"tariffs")
                 state["settings"] = deca.settings(db)
             folder = getattr(self.server,"backup_folder",None)
             newest = autobackup.latest(folder) if folder else None
@@ -281,6 +283,10 @@ class Handler(BaseHTTPRequestHandler):
                     result = driver_link(db,data)
                 elif path == "/api/materials":
                     result = {"id":save_material(db,data)}
+                elif path == "/api/tariffs":
+                    result = {"id":save_tariff(db,data)}
+                elif path == "/api/tariff-delete":
+                    result = delete_tariff(db,data)
                 elif path == "/api/material-delete":
                     result = delete_material(db,data)
                 elif path == "/api/itv-import":

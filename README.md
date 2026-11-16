@@ -155,6 +155,24 @@ source list, so duplicates are flagged but not blocked. Each loading stop
 (including extra loadings) can name the material; the stop keeps the material
 text, so deleting a material does not change past orders.
 
+## Tariffs and order price
+
+The Tariffs tab holds what each client pays for a route, from one saved
+location to another: € per tonne of the loading weight, € per tonne of the
+unloading weight, a fixed price per trip, or € per hour. A client can have only
+one active tariff per route and price type; untick Active to keep an older price.
+
+In the order form, choosing the loading and unloading point finds the tariffs
+for that route. When there is exactly one, it is applied (client, price type,
+price); otherwise pick one. The price is calculated from the weights on the
+order (an empty final unloading weight = everything still on the truck). For
+hourly prices, or any fixed amount, enter the agreed total. The order keeps its
+own copy of the price, so changing or deleting a tariff never alters past orders.
+
+`import_witruck_tariffs.py` imported the tariffs of the old Witruck admin once
+(the export stays in `data/`, never committed). Places that were not yet saved
+became locations with the note "Added from the Witruck tariffs."
+
 ## Online (Render)
 
 When the `PORT` environment variable is set (Render sets it), the app listens on
@@ -275,14 +293,14 @@ Server (Python, standard library + libsql):
 
 - `app.py` starts the server; `server.py` routes requests (login, driver page, API, files)
 - `common.py` input helpers · `masters.py` tractors, trailers, drivers, locations
-- `orders.py` journeys, timing, conflicts, confirmations · `materials.py` · `itv.py`
+- `orders.py` journeys, timing, conflicts, confirmations · `materials.py` · `tariffs.py` · `itv.py`
 - `nearby.py` companies near a free truck · `driverlinks.py` + `driver.py` driver page
 - `deca.py` + `qr.py` Documento de Control · `planner.py` EU driving rules
 - `storage.py` SQLite / Turso · `autobackup.py` daily backup · `auth.py` login
 
 Interface (`static/js`, loaded in this order by `index.html`): `core.js` (state,
 helpers, API) · `upcoming.js` · `nearby.js` · `board.js` · `itv.js` ·
-`materials.js` · `planner.js` · `directory.js` · `settings.js` · `forms.js` ·
+`materials.js` · `tariffs.js` · `planner.js` · `directory.js` · `settings.js` · `forms.js` ·
 `order-form.js` · `whatsapp.js` · `deca.js` · `order-detail.js` · `events.js`
 (handlers and start-up, always last).
 
