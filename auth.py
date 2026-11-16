@@ -12,6 +12,7 @@ COOKIE = "mt_session"
 SESSION_DAYS = 30
 MAX_FAILURES = 8          # wrong passwords per address ...
 FAILURE_WINDOW = 15 * 60  # ... within 15 minutes, then wait
+MAX_TOTAL_FAILURES = 200  # from all addresses together in the same window: pause all logins
 
 
 class Auth:
@@ -54,9 +55,12 @@ class Auth:
     def blocked(self, address):
         now = time.monotonic()
         with self._lock:
-            recent = [at for at in self._failures.get(address, []) if now - at < FAILURE_WINDOW]
-            self._failures[address] = recent
-            return len(recent) >= MAX_FAILURES
+            for key in list(self._failures):
+                self._failures[key] = [at for at in self._failures[key] if now - at < FAILURE_WINDOW]
+                if not self._failures[key]:
+                    del self._failures[key]
+            total = sum(len(times) for times in self._failures.values())
+            return len(self._failures.get(address, [])) >= MAX_FAILURES or total >= MAX_TOTAL_FAILURES
 
     def check(self, address, password):
         """True when the password is right; wrong attempts are counted per address."""

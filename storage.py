@@ -39,9 +39,10 @@ class TursoReplica:
             self._last_sync = time.monotonic()
 
     @contextmanager
-    def session(self):
+    def session(self, fresh=False):
         with self._lock:
-            if time.monotonic() - self._last_sync > self.SYNC_INTERVAL:
+            # Saves check conflicts against the latest data (another copy may have written meanwhile).
+            if fresh or time.monotonic() - self._last_sync > self.SYNC_INTERVAL:
                 self.sync()
             db = _LibsqlConnection(self._conn, self.sync)
             try:
@@ -251,9 +252,9 @@ def reserve_id(db, table):
 
 
 @contextmanager
-def connect(target):
+def connect(target, fresh=False):
     if isinstance(target, TursoReplica):
-        with target.session() as db:
+        with target.session(fresh) as db:
             yield db
         return
     db = sqlite3.connect(target, timeout=15)

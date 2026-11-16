@@ -256,14 +256,35 @@ starter records are preserved in their original table, but not shown in the new
 dispatch UI. No sample fleet or driver data is added to the real database.
 
 Settings & backup → Download database backup creates a consistent SQLite copy
-while running. Restore with the server stopped: preserve the current file,
-replace it with the backup, restart. Keep backups of this project: it currently
-lives INSIDE an existing venv; deleting/rebuilding that venv could remove it.
+while running. The copy on your computer also makes an automatic backup every
+day in `backups/auto` (last 30 kept); the online server cannot keep files, so
+download one from there when needed. Restore with the server stopped: preserve
+the current file, replace it with the backup, restart.
 
-The app binds only to 127.0.0.1. It has no multi-user authentication or permission
-system. It validates local host headers, requires a per-process CSRF token for
-mutations, escapes UI text, uses SQL parameters and checks assignment conflicts.
-Do not expose the development server on a public interface.
+Security: on your computer the app listens only on 127.0.0.1 without a login.
+Online it requires the dispatcher password (signed session cookie, lockout after
+repeated wrong passwords, keyed on Cloudflare's visitor address), checks the host
+header, requires a per-process CSRF token for every change, escapes UI text, uses
+SQL parameters, sends HSTS / no-referrer / CSP headers and never logs driver links.
+Every save first syncs with Turso, so the computer and the online copy check
+conflicts against the same data. Driver links stop working 7 days after delivery.
+
+## Code layout
+
+Server (Python, standard library + libsql):
+
+- `app.py` starts the server; `server.py` routes requests (login, driver page, API, files)
+- `common.py` input helpers · `masters.py` tractors, trailers, drivers, locations
+- `orders.py` journeys, timing, conflicts, confirmations · `materials.py` · `itv.py`
+- `nearby.py` companies near a free truck · `driverlinks.py` + `driver.py` driver page
+- `deca.py` + `qr.py` Documento de Control · `planner.py` EU driving rules
+- `storage.py` SQLite / Turso · `autobackup.py` daily backup · `auth.py` login
+
+Interface (`static/js`, loaded in this order by `index.html`): `core.js` (state,
+helpers, API) · `upcoming.js` · `nearby.js` · `board.js` · `itv.js` ·
+`materials.js` · `planner.js` · `directory.js` · `settings.js` · `forms.js` ·
+`order-form.js` · `whatsapp.js` · `deca.js` · `order-detail.js` · `events.js`
+(handlers and start-up, always last).
 
 ## Checks
 

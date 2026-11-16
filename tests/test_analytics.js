@@ -1,7 +1,8 @@
 // Run with: node tests/test_analytics.js
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict'),path=require('node:path');
 const root=path.join(__dirname,'../static'),context=vm.createContext({console,document:{addEventListener(){}}});
-vm.runInContext(fs.readFileSync(path.join(root,'app.js'),'utf8').split("document.addEventListener('click'")[0],context);
+// Interface modules in the order index.html loads them; events.js (handlers and start-up) is left out.
+for(const name of [...fs.readFileSync(path.join(root,'index.html'),'utf8').matchAll(/src="\/js\/([a-z-]+\.js)"/g)].map(m=>m[1]).filter(n=>n!=='events.js'))vm.runInContext(fs.readFileSync(path.join(root,'js',name),'utf8'),context);
 vm.runInContext(fs.readFileSync(path.join(root,'analytics.js'),'utf8'),context);
 vm.runInContext(fs.readFileSync(path.join(root,'search-select.js'),'utf8'),context);
 vm.runInContext(`state={now:'2026-11-11T10:00+01:00',trucks:[{id:1,plate:'ONE',operation:'Local'},{id:2,plate:'TWO',operation:'National'}],trailers:[{id:7,plate:'TR-NEW',active:1,notes:''}],drivers:[{id:3,name:'Demo'}],locations:[{id:1,city:'Madrid',company:'A',postal_code:'28001',country:'Spain'},{id:2,city:'Bilbao',company:'B',postal_code:'48001',country:'Spain'}],orders:[]};

@@ -1,2 +1,2 @@
-tzdata>=2024.1
-libsql>=0.1.11
+tzdata==2026.6
+libsql==0.1.11

@@ -788,6 +788,78 @@ class DispatchTests(unittest.TestCase):
             server.server_close()
             thread.join()
 
+    def test_driver_link_expires_a_week_after_delivery(self):
+        from datetime import timedelta
+        with connect(self.database) as db:
+            order_id = app.create_order(db, self.manual_payload())
+            token = app.driver_link(db, {"order_id": order_id})["token"]
+            app.set_stop_status(db, {"order_id": order_id, "seq": 1})
+            app.set_stop_status(db, {"order_id": order_id, "seq": 2})
+            self.assertIsNotNone(app.driver_order(db, token)[0])  # just delivered: still visible
+            old = app.stamp(app.parse_time(app.item(db, "orders", order_id)["delivered_at"]) - timedelta(days=8))
+            db.execute("UPDATE orders SET delivered_at=? WHERE id=?", (old, order_id))
+            self.assertIsNone(app.driver_order(db, token)[0])
+
+    def test_automatic_backup_daily_and_pruned(self):
+        import autobackup, os, time as clock
+        folder = Path(self.temp.name) / "auto"
+        first = autobackup.run_once(self.database, folder)
+        self.assertTrue(first.exists())
+        with connect(first) as db:
+            self.assertEqual(len(rows(db, "trucks")), 1)
+        self.assertIsNone(autobackup.run_once(self.database, folder))  # already one today
+        # Old copies: only the last 30 are kept.
+        for day in range(35):
+            path = folder / f"MalcomTrans-2020-01-{day + 1:02d}.sqlite3" if day < 31 else folder / f"MalcomTrans-2020-02-{day - 30:02d}.sqlite3"
+            path.write_bytes(b"x")
+            os.utime(path, (clock.time() - 86400 * 40, clock.time() - 86400 * 40))
+        os.utime(first, (clock.time() - 86400 * 2, clock.time() - 86400 * 2))
+        made = autobackup.run_once(self.database, folder, now=clock.time())
+        self.assertTrue(made.exists())
+        self.assertEqual(len(autobackup.files(folder)), autobackup.KEEP)
+        self.assertFalse(list(folder.glob("*.partial")))
+
+    def test_security_headers_modules_and_visitor_address(self):
+        from auth import Auth
+        import http.client
+        server = app.ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)
+        server.database = self.database
+        server.auth = Auth("correct horse battery", "secret")
+        server.public_hosts = {"malcomtrans.onrender.com"}
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        port = server.server_port
+        def call(method, path, body=None, headers=None):
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+            connection.request(method, path, body=body, headers={"Host": f"127.0.0.1:{port}", **(headers or {})})
+            response = connection.getresponse()
+            data = response.read()
+            connection.close()
+            return response.status, dict(response.getheaders()), data
+        try:
+            status, headers, _ = call("GET", "/login", headers={"X-Forwarded-Proto": "https"})
+            self.assertEqual(headers["Referrer-Policy"], "no-referrer")
+            self.assertIn("max-age", headers["Strict-Transport-Security"])
+            self.assertEqual(headers["Server"], "MalcomTrans")
+            # Interface modules load after login; nothing outside static/js can be read.
+            self.assertEqual(call("GET", "/js/core.js")[0], 303)
+            form = {"Content-Type": "application/x-www-form-urlencoded", "CF-Connecting-IP": "198.51.100.7"}
+            _, headers, _ = call("POST", "/login", b"password=correct+horse+battery", form)
+            session = {"Cookie": headers["Set-Cookie"].split(";")[0]}
+            status, headers, body = call("GET", "/js/core.js", headers=session)
+            self.assertEqual((status, headers["Content-Type"].split(";")[0]), (200, "text/javascript"))
+            for bad in ("/js/../app.py", "/js/missing.js", "/js/Core.js", "/app.js"):
+                self.assertEqual(call("GET", bad, headers=session)[0], 404, bad)
+            # The lockout follows Cloudflare's address: a faked X-Forwarded-For does not get around it.
+            with patch.object(app.time, "sleep"):
+                for attempt in range(8):
+                    call("POST", "/login", b"password=nope", {**form, "X-Forwarded-For": f"10.0.0.{attempt}"})
+                self.assertEqual(call("POST", "/login", b"password=correct+horse+battery", {**form, "X-Forwarded-For": "10.9.9.9"})[0], 429)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
     def test_online_login_session_and_lockout(self):
         from auth import Auth
         import http.client
