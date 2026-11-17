@@ -413,6 +413,14 @@ def initialize(target):
             db.execute("ALTER TABLE order_stops ADD COLUMN material TEXT NOT NULL DEFAULT ''")
         if "weight_kg" not in columns:
             db.execute("ALTER TABLE order_stops ADD COLUMN weight_kg REAL")
+        # Tractor change: the tractor and driver that take the trailer from this stop on (empty = not chosen yet),
+        # and that driver's own secret link.
+        if "truck_id" not in columns:
+            db.execute("ALTER TABLE order_stops ADD COLUMN truck_id INTEGER REFERENCES trucks(id)")
+        if "driver_id" not in columns:
+            db.execute("ALTER TABLE order_stops ADD COLUMN driver_id INTEGER REFERENCES drivers(id)")
+        if "driver_token" not in columns:
+            db.execute("ALTER TABLE order_stops ADD COLUMN driver_token TEXT")
         # Documento de Control (DeCA): shipper's NIF, the document id and its own fields per order.
         columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(locations)")}
         if "nif" not in columns:

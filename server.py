@@ -28,7 +28,7 @@ from materials import delete_material, save_material
 from tariffs import delete_tariff, save_tariff
 from nearby import log_contact, nearby_companies
 from nextloads import next_loads
-from orders import build_plan, carry_clock, create_order, set_stop_status, update_stop_eta, uses_rules
+from orders import assign_tractor, build_plan, carry_clock, create_order, set_stop_status, update_stop_eta, uses_rules
 from planner import UTC, parse_time, stamp
 from storage import TursoReplica, backup_to, connect, rows
 from upcoming import weekly_availability
@@ -333,6 +333,8 @@ class Handler(BaseHTTPRequestHandler):
                     result = set_stop_status(db,data)
                 elif path == "/api/stop-eta":
                     result = update_stop_eta(db,data)
+                elif path == "/api/assign-tractor":
+                    result = assign_tractor(db,data)
                 elif path == "/api/geocode":
                     result = {"matches":routing.geocode(text(data,"query",True,600))}
                 elif path == "/api/upcoming":

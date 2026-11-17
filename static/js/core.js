@@ -3,7 +3,7 @@
 const $ = (s, root=document) => root.querySelector(s);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let state, view='planner', selectedDay='', period=1, toastTimer, filterTimer;
-let upcomingData=null, upcomingError='', upcomingRequest=0, weekOffset=0, weekCount=1, upcomingTruck='', upcomingOperation='';
+let upcomingData=null, upcomingError='', upcomingRequest=0, weekOffset=0, weekCount=1, upcomingTruck='', upcomingOperation='', upcomingMode='trucks';
 const filters={plate:'',loading:'',unloading:'',operation:'',status:''};
 const names={board:'Fleet board',planner:'Daily planning',upcoming:'Upcoming planning',analytics:'Analytics',trailers:'Trailers',trucks:'Tractors',drivers:'Drivers & carriers',locations:'Saved locations',materials:'Materials',tariffs:'Tariffs',itv:'ITV',settings:'Settings & backup'};
 // Default time at a loading or unloading point (hours); trailer swaps default to 0.5 h.

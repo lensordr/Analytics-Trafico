@@ -483,6 +483,65 @@ class DispatchTests(unittest.TestCase):
                                      "unloading_arrive_at":"2030-01-08T12:00"})
             self.assertTrue(first)
 
+    def test_tractor_change_splits_the_order_between_tractors(self):
+        import driver
+        from driverlinks import driver_order
+        from upcoming import weekly_availability
+        with connect(self.database) as db:
+            base = self.add_location(db,"Base",41.65,-0.88)
+            second_driver = app.save_master(db,"drivers",{"name":"Second Driver","carrier":"Malcom Trans"})
+            second = app.save_master(db,"trucks",{"plate":"RELAY-2","trailer":"","driver_id":second_driver,"operation":"International"})
+            third = app.save_master(db,"trucks",{"plate":"OTHER-3","trailer":"","driver_id":"","operation":"Local"})
+        relay = lambda **extra: self.manual_payload(trailer_id=self.trailer,
+            via=[{"kind":"Tractor change","location_id":base,"handling_hours":0.5,"arrive_at":"2030-01-07T14:00",**extra}])
+        with connect(self.database) as db:
+            with self.assertRaisesRegex(ValueError,"arrival times you enter"):
+                app.create_order(db,{**relay(truck_id=second),"timing":"rules"})
+            with self.assertRaisesRegex(ValueError,"different tractor"):
+                app.create_order(db,relay(truck_id=self.truck))
+            order = app.create_order(db,relay(truck_id=second))
+            stops = app.order_stop_rows(db,order)
+            self.assertEqual((stops[1]["kind"],stops[1]["truck_id"],stops[1]["driver_id"]),("Tractor change",second,second_driver))
+        with connect(self.database) as db:
+            # The first tractor is free after leaving the trailer at the base; the second one is busy until delivery.
+            free = dict(self.manual_payload(trailer="",trailer_id="",pickup_at="2030-01-07T16:00",unloading_arrive_at="2030-01-07T20:00"))
+            app.create_order(db,free)
+            with self.assertRaisesRegex(ValueError,"already assigned"):
+                app.create_order(db,{**free,"truck_id":second,"driver_id":second_driver,"pickup_at":"2030-01-08T08:00",
+                                     "unloading_arrive_at":"2030-01-08T12:00"})
+            weeks = weekly_availability(db,{"week_offset":0,"week_count":1},now=app.parse_time("2030-01-07T06:00"))
+            first_free = [w for w in weeks["weeks"][0]["windows"] if w["truck_id"]==second]
+            self.assertEqual(first_free[0]["location"]["id"],self.b)  # free at the unloading
+            self.assertEqual(first_free[0]["from"],"2030-01-08T16:00+01:00")
+        with connect(self.database) as db:
+            first_link = app.driver_link(db,{"order_id":order})["token"]
+            second_link = app.driver_link(db,{"order_id":order,"seq":2})["token"]
+            self.assertNotEqual(first_link,second_link)
+            a, a_stops, a_places = driver_order(db,first_link)
+            b, b_stops, b_places = driver_order(db,second_link)
+        self.assertEqual(([s["seq"] for s in a_stops],[s["seq"] for s in b_stops]),([1,2],[2,3]))
+        self.assertEqual((a["plate"],b["plate"]),("TEST-001","RELAY-2"))
+        self.assertIn("HE DEJADO EL REMOLQUE",driver.render(first_link,a,[{**s,"status":"Done"} if s["seq"]==1 else s for s in a_stops],a_places,"es"))
+        self.assertIn("HE COGIDO EL REMOLQUE",driver.render(second_link,b,b_stops,b_places,"es"))
+        for seq in (1,2):
+            with connect(self.database) as db:
+                app.set_stop_status(db,{"order_id":order,"seq":seq,"done_at":f"2030-01-07T{8+seq*3:02d}:00"})
+        with connect(self.database) as db:
+            self.assertEqual(app.item(db,"trucks",second)["trailer_id"],self.trailer)  # the trailer is on the second tractor
+            self.assertIsNone(app.item(db,"trucks",self.truck)["trailer_id"])
+            app.set_stop_status(db,{"order_id":order,"seq":2,"done":False})
+        with connect(self.database) as db:
+            self.assertEqual(app.item(db,"trucks",self.truck)["trailer_id"],self.trailer)  # undo: back on the first one
+            # Tractor chosen later (or changed) while the order is on its way; the new driver gets a new link.
+            with self.assertRaisesRegex(ValueError,"different tractor"):
+                app.assign_tractor(db,{"order_id":order,"seq":2,"truck_id":self.truck})
+            app.assign_tractor(db,{"order_id":order,"seq":2,"truck_id":third})
+            stop = app.order_stop_rows(db,order)[1]
+            self.assertEqual((stop["truck_id"],stop["driver_id"],stop["driver_token"]),(third,None,None))
+            app.assign_tractor(db,{"order_id":order,"seq":2,"truck_id":""})
+            waiting = weekly_availability(db,{"week_offset":0,"week_count":1},now=app.parse_time("2030-01-07T06:00"))["waiting"]
+            self.assertEqual([(w["order_id"],w["seq"]) for w in waiting],[(order,2)])
+
     def test_trailer_pickup_order_shows_pickup_to_driver(self):
         import driver
         from driverlinks import driver_order

@@ -180,3 +180,11 @@
 .journey-row[data-order-id],.board-journey[data-order-id]{cursor:pointer}
 .journey-row[data-order-id]:hover>td{background:var(--hover,rgba(37,99,235,.05))}
 .board-journey[data-order-id]:hover{box-shadow:0 0 0 2px rgba(37,99,235,.35)}
+
+/* Tractor change: upcoming tabs, waiting trailers and the trailer view. */
+.upcoming-tabs{display:inline-flex;margin:0 0 16px}.stop-chip.relay{background:#efe9fb;color:#5b4691}
+.waiting-trailers{border-color:#eddfbd}.waiting-trailers .panel-head{background:#fff8e9}.waiting-trailer h3{display:flex;gap:8px;align-items:center}
+.trailer-planning td{white-space:normal}.trailer-load{border:1px solid #e5eadb;border-radius:6px;padding:9px 11px;margin-bottom:8px;cursor:pointer}.trailer-load:hover{box-shadow:0 0 0 2px rgba(37,99,235,.25)}
+.trailer-load-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:10px}.trailer-parts{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.trailer-part{background:#f3f7ee;border-radius:5px;padding:6px 9px}.trailer-part strong{font-size:11px}.trailer-part small{margin-top:3px}.trailer-part.no-tractor{background:#fff1db;color:#956522}
+.relay-edit .search-select{margin-bottom:8px}

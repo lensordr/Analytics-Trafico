@@ -6,16 +6,28 @@ import secrets
 
 import deca
 from common import item
-from orders import order_stop_rows
+from orders import order_stop_rows, tractor_segments
 from planner import UTC, parse_time
 
 LINK_DAYS_AFTER_END = 7
 
 def driver_link(db, data):
-    """Secret link for the driver page of an order (created once, reused in every message)."""
+    """Secret link for the driver page of an order (created once, reused in every message).
+    With `seq` (a tractor change): the link of the driver who takes the trailer there, for their part only."""
     order = item(db, "orders", data.get("order_id"))
     if order["status"] == "Cancelled":
         raise ValueError("This order is cancelled.")
+    if data.get("seq"):
+        stop = db.execute("SELECT id, driver_token FROM order_stops WHERE order_id=? AND seq=? AND kind='Tractor change'",
+                          (order["id"], int(data["seq"]))).fetchone()
+        if stop is None:
+            raise ValueError("Choose a valid tractor change.")
+        token = stop["driver_token"]
+        if not token:
+            token = secrets.token_urlsafe(16)
+            db.execute("UPDATE order_stops SET driver_token=? WHERE id=?", (token, stop["id"]))
+        base = deca.settings(db)["public_url"]
+        return {"token": token, "url": f"{base}/s/{token}" if base else ""}
     token = order["driver_token"]
     if not token:
         token = secrets.token_urlsafe(16)
@@ -63,7 +75,16 @@ def driver_deca(db, order, stops, form):
 
 
 def driver_order(db, token):
+    """The order of a driver link, with only that driver's part of the journey when the order changes tractor.
+    The order's tractor, driver and trailer shown are the ones of that part."""
     row = db.execute("SELECT * FROM orders WHERE driver_token=?", (token,)).fetchone() if token else None
+    start_seq = 1
+    if row is None and token:
+        stop = db.execute("SELECT order_id, seq FROM order_stops WHERE driver_token=? AND kind='Tractor change'",
+                          (token,)).fetchone()
+        if stop:
+            row = db.execute("SELECT * FROM orders WHERE id=?", (stop["order_id"],)).fetchone()
+            start_seq = stop["seq"]
     if row is None:
         return None, [], {}
     order = {key.lower(): row[key] for key in row.keys()}
@@ -71,5 +92,15 @@ def driver_order(db, token):
     if ended and parse_time(ended) < datetime.now(UTC) - timedelta(days=LINK_DAYS_AFTER_END):
         return None, [], {}  # expired: the page no longer shows addresses or the trip
     stops = order_stop_rows(db, order["id"])
+    part = next((p for p in tractor_segments(order, stops) if p[4] == start_seq), None)
+    if part is None:
+        return None, [], {}
+    truck_id, driver_id, _, _, first, last = part
+    if (first, last) != (1, stops[-1]["seq"] if stops else 1):
+        stops = [stop for stop in stops if first <= stop["seq"] <= last]
+        truck = db.execute("SELECT plate, trailer FROM trucks WHERE id=?", (truck_id,)).fetchone() if truck_id else None
+        driver = db.execute("SELECT name FROM drivers WHERE id=?", (driver_id,)).fetchone() if driver_id else None
+        order.update(plate=truck["plate"] if truck else "—", driver_id=driver_id, driver_name=driver["name"] if driver else "",
+                     part_first=first, part_last=last)
     places = {stop["location_id"]: item(db, "locations", stop["location_id"]) for stop in stops}
     return order, stops, places

@@ -1,5 +1,6 @@
 """Calendar-week availability derived from saved dispatch assignments."""
 from datetime import datetime, time, timedelta
+from orders import tractor_segments
 from planner import UTC, ZONE, parse_time, stamp
 from storage import rows
 
@@ -40,18 +41,28 @@ def weekly_availability(db, data, now=None):
     drivers = {d["id"]: d for d in rows(db, "drivers")}
     locations = {loc["id"]: loc for loc in rows(db, "locations")}
     trucks = [t for t in rows(db, "trucks") if t["active"]]
+    # Each tractor's parts of the orders: with a tractor change, a tractor is busy only until it leaves the trailer,
+    # and is then free where it left it.
+    parts = {}
+    for order in orders:
+        stops = {stop["seq"]: stop for stop in order["stops"]}
+        for truck_id, driver_id, start, end, first, last in tractor_segments(order, order["stops"]):
+            if truck_id:
+                where = stops[last]["location_id"] if last in stops and last != max(stops, default=0) else order["unloading_id"]
+                parts.setdefault(truck_id, []).append({"order": order, "driver_id": driver_id, "start": start,
+                                                       "end": end, "location_id": where})
     all_windows, unknown = [], []
     for truck in trucks:
-        own_orders = [o for o in orders if o["truck_id"] == truck["id"]]
-        latest_order = max(own_orders, key=lambda o:parse_time(o["pickup_at"]), default=None)
-        driver_id = truck["driver_id"] or (latest_order["driver_id"] if latest_order else None)
+        own = parts.get(truck["id"], [])
+        latest = max(own, key=lambda p:p["start"], default=None)
+        driver_id = truck["driver_id"] or (latest["driver_id"] if latest else None)
         driver = drivers.get(driver_id)
-        trailer = truck["trailer"] or (latest_order["trailer"] if latest_order else "")
+        trailer = truck["trailer"] or (latest["order"]["trailer"] if latest else "")
         # Upcoming planning follows the tractor, independently of driver assignment.
-        related = own_orders
-        bookings = [(parse_time(o["pickup_at"]), parse_time(o["available_at"])) for o in related]
-        anchors = [{"at":parse_time(o["available_at"]), "location_id":o["unloading_id"],
-                    "source_order_id":o["id"], "source":o["number"]} for o in own_orders]
+        related = own
+        bookings = [(p["start"], p["end"]) for p in own]
+        anchors = [{"at":p["end"], "location_id":p["location_id"],
+                    "source_order_id":p["order"]["id"], "source":p["order"]["number"]} for p in own]
         if truck["location_id"] and truck["available_from"]:
             anchors.append({"at":parse_time(truck["available_from"]), "location_id":truck["location_id"],
                             "source_order_id":None, "source":"Reported fleet location"})
@@ -68,7 +79,7 @@ def weekly_availability(db, data, now=None):
             for free_start, free_end in subtract_bookings(start, end, bookings):
                 if (free_end-free_start).total_seconds() < 7200:
                     continue
-                next_jobs = [o for o in related if parse_time(o["pickup_at"]) == free_end]
+                next_jobs = [p["order"] for p in related if p["start"] == free_end]
                 next_job = next_jobs[0] if next_jobs else None
                 all_windows.append({"truck_id":truck["id"], "plate":truck["plate"], "trailer":trailer,
                                     "driver_id":driver["id"] if driver else None,
@@ -99,5 +110,14 @@ def weekly_availability(db, data, now=None):
         weeks.append({"start":week_day.isoformat(), "end":(week_day+timedelta(days=6)).isoformat(),
                       "week_number":week_day.isocalendar().week, "year":week_day.isocalendar().year,
                       "windows":windows, "scheduled":scheduled})
-    return {"weeks":weeks, "unknown":unknown, "active_trucks":len(trucks), "now":stamp(now),
+    waiting = []
+    for order in orders:
+        for stop in order["stops"]:
+            if stop["kind"] == "Tractor change" and not stop.get("truck_id") and order["status"] != "Completed":
+                waiting.append({"order_id":order["id"], "number":order["number"], "seq":stop["seq"],
+                                "trailer":order["trailer"], "location":locations.get(stop["location_id"]),
+                                "from":stop["done_at"] or stop["planned_at"], "left":stop["status"] == "Done",
+                                "unloading":locations.get(order["unloading_id"]), "client_id":order.get("client_id")})
+    waiting.sort(key=lambda w:w["from"])
+    return {"weeks":weeks, "unknown":unknown, "waiting":waiting, "active_trucks":len(trucks), "now":stamp(now),
             "week_offset":offset, "week_count":count}

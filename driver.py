@@ -14,6 +14,7 @@ TEXT = {
         "Loading": "Încărcare", "Unloading": "Descărcare", "Trailer swap": "Schimb remorcă",
         "extra_loading": "Încărcare suplimentară", "extra_unloading": "Descărcare parțială",
         "pickup": "Iei remorca încărcată", "do_pickup": "✅ AM LUAT REMORCA",
+        "Tractor change": "Lași remorca (o ia alt camion)", "do_Tractor change": "✅ AM LĂSAT REMORCA",
         "do_Loading": "✅ AM ÎNCĂRCAT", "do_Unloading": "✅ AM DESCĂRCAT", "do_Trailer swap": "✅ AM SCHIMBAT REMORCA",
         "sure": "Confirmi?", "yes": "DA, CONFIRM", "back": "Înapoi",
         "planned": "Planificat", "done": "Confirmat", "map": "📍 Deschide în Google Maps",
@@ -35,6 +36,7 @@ TEXT = {
         "Loading": "Carga", "Unloading": "Descarga", "Trailer swap": "Cambio de remolque",
         "extra_loading": "Carga adicional", "extra_unloading": "Descarga parcial",
         "pickup": "Recoges el remolque cargado", "do_pickup": "✅ HE COGIDO EL REMOLQUE",
+        "Tractor change": "Dejas el remolque (lo lleva otro camión)", "do_Tractor change": "✅ HE DEJADO EL REMOLQUE",
         "do_Loading": "✅ HE CARGADO", "do_Unloading": "✅ HE DESCARGADO", "do_Trailer swap": "✅ HE CAMBIADO EL REMOLQUE",
         "sure": "¿Confirmas?", "yes": "SÍ, CONFIRMO", "back": "Volver",
         "planned": "Previsto", "done": "Confirmado", "map": "📍 Abrir en Google Maps",
@@ -85,7 +87,10 @@ def route_url(places):
 
 
 def _pickup(stop, order):
-    """First stop of an order that only picks up a loaded, parked trailer."""
+    """The driver picks up a loaded trailer here: first stop of a pick-up order, or the tractor change where
+    this driver's part starts."""
+    if stop["kind"] == "Tractor change":
+        return bool(order) and order.get("part_first") == stop["seq"]
     return bool(order and order.get("trailer_pickup")) and stop["seq"] == 1 and stop["kind"] == "Loading"
 
 
@@ -94,7 +99,7 @@ def _label(stop, stops, t, order=None):
         return t["pickup"]
     if stop["kind"] == "Loading" and stop["seq"] > 1:
         return t["extra_loading"]
-    if stop["kind"] == "Unloading" and stop["seq"] < len(stops):
+    if stop["kind"] == "Unloading" and stop["seq"] < stops[-1]["seq"]:
         return t["extra_unloading"]
     return t[stop["kind"]]
 
@@ -166,10 +171,12 @@ def render(token, order, stops, places, lang, confirm_seq=None, message="", erro
                      f'{control}<a class="map" href="{maps_url(place)}">{t["map"]}</a></section>')
     # Once something is loaded: open the DeCA (to show at a control), or fill it in.
     loaded = [s for s in stops if s["kind"] == "Loading" and s["status"] == "Done"]
-    if loaded and order["status"] != "Cancelled" and not deca_stop:
+    # The driver who takes the trailer at a tractor change carries the load too: they can open the DeCA.
+    carries = loaded or (order.get("part_first") or 1) > 1
+    if carries and order["status"] != "Cancelled" and not deca_stop:
         if order.get("deca_id"):
             parts.append(f'<a class="map deca-link" href="/d/{escape(order["deca_id"])}">{t["deca_open"]}</a>')
-        else:
+        elif loaded:
             parts.append(f'<a class="map deca-link" href="{base}?l={lang}&deca={loaded[-1]["seq"]}">{t["deca_fill"]}</a>')
     items = []
     for stop in stops:

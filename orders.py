@@ -11,7 +11,8 @@ from tariffs import order_price
 from planner import Clock, UTC, ZONE, number, parse_time, route_plan, stamp, week_key
 from storage import begin_write, reserve_id, rows
 
-STOP_KINDS = ("Loading", "Unloading", "Trailer swap")
+STOP_KINDS = ("Loading", "Unloading", "Trailer swap", "Tractor change")
+QUICK_STOPS = ("Trailer swap", "Tractor change")  # 0.5 h by default: hooking or unhooking a trailer
 DEFAULT_HANDLING_HOURS = 2  # loading/unloading time when the form does not say otherwise
 MAX_EXTRA_STOPS = 6
 
@@ -108,7 +109,7 @@ def journey_stops(db, data, create=False):
         if kind not in STOP_KINDS:
             raise ValueError(f"Stop {index}: choose loading, unloading or trailer swap.")
         stop = {"kind": kind, "location": item(db, "locations", extra.get("location_id")),
-                "handling_hours": number(extra, "handling_hours", 0.5 if kind == "Trailer swap" else DEFAULT_HANDLING_HOURS, 0, 6),
+                "handling_hours": number(extra, "handling_hours", 0.5 if kind in QUICK_STOPS else DEFAULT_HANDLING_HOURS, 0, 6),
                 "leg": manual_leg(extra, "leg_km", "leg_hours", f"Stop {index}", manual_times)}
         if manual_times:
             stop["arrive_at"] = arrival_input(extra, "arrive_at", f"Stop {index}")
@@ -122,6 +123,11 @@ def journey_stops(db, data, create=False):
             if picked is None:
                 raise ValueError(f"Stop {index}: choose the trailer that is picked up at the swap.")
             stop["pick"] = picked
+        if kind == "Tractor change":
+            # The same trailer (and its load) goes on with another tractor; it can be chosen later.
+            truck = item(db, "trucks", extra["truck_id"]) if extra.get("truck_id") else None
+            driver_id = extra.get("driver_id") or (truck["driver_id"] if truck else None)
+            stop["truck"], stop["driver"] = truck, item(db, "drivers", driver_id) if driver_id else None
         stops.append(stop)
     stops.append({"kind": "Unloading", "location": item(db, "locations", data.get("unloading_id")),
                   "handling_hours": number(data, "unloading_hours", DEFAULT_HANDLING_HOURS, 0, 6),
@@ -147,6 +153,15 @@ def build_plan(db, data, create=False):
     pickup = parse_time(data.get("pickup_at"))
     trailer = selected_trailer(db, data, create)
     stops = journey_stops(db, data, create)
+    changes = [stop for stop in stops if stop["kind"] == "Tractor change"]
+    if changes and order_timing(data) != "manual":
+        raise ValueError("An order with a tractor change uses arrival times you enter (Arrival times: I enter them), "
+                         "because each tractor has its own driver and driving clock.")
+    previous = truck
+    for stop in changes:
+        if stop["truck"] and stop["truck"]["id"] == previous["id"]:
+            raise ValueError(f"Tractor change in {stop['location']['city']}: choose a different tractor.")
+        previous = stop["truck"] or {"id": None}
     # Follow the trailer through the journey: a swap drops the current one and picks another.
     current = trailer
     for stop in stops:
@@ -227,35 +242,82 @@ def trailer_spans(db):
     return spans
 
 
-def conflicts(db, truck, driver, trailer, start, end, exclude=0, trailer_id=None, trailer_ids=()):
+def tractor_segments(order, stops):
+    """Which tractor and driver have the order when: [(truck_id, driver_id, start, end, first_seq, last_seq)].
+    A tractor change ends the previous tractor's part when the trailer is left (confirmed, else planned end of the
+    stop) and starts the next tractor's part when it takes the trailer. Without a change: one part, the whole order."""
+    truck, driver, start, first, parts = order["truck_id"], order["driver_id"], parse_time(order["pickup_at"]), 1, []
+    for stop in stops:
+        if stop["kind"] == "Tractor change":
+            parts.append((truck, driver, start, parse_time(stop["done_at"] or stop["planned_end_at"]), first, stop["seq"]))
+            truck, driver = stop.get("truck_id"), stop.get("driver_id")
+            start, first = parse_time(stop["done_at"] or stop["planned_at"]), stop["seq"]
+    last = max((stop["seq"] for stop in stops), default=1)
+    parts.append((truck, driver, start, parse_time(order["available_at"]), first, last))
+    return parts
+
+
+def all_segments(db, exclude=0):
+    """Tractor parts of every active order (except `exclude`): {order_id: (number, parts)}."""
+    changes = {}
+    for row in db.execute("SELECT * FROM order_stops WHERE kind='Tractor change' ORDER BY order_id, seq"):
+        changes.setdefault(row["order_id"], []).append({key.lower(): row[key] for key in row.keys()})
+    result = {}
+    for row in db.execute("SELECT id, number, truck_id, driver_id, pickup_at, available_at FROM orders "
+                          "WHERE status!='Cancelled' AND id!=?", (exclude,)):
+        result[row["id"]] = (row["number"], tractor_segments(dict(row), changes.get(row["id"], [])))
+    return result
+
+
+def conflicts(db, truck, driver, trailer, start, end, exclude=0, trailer_id=None, trailer_ids=(), segments=None):
+    """Orders that already use the tractor, driver or trailer at that time. `segments` are this order's tractor parts
+    [(truck_id, driver_id, start, end)] when it has a tractor change; the trailer is checked over the whole order."""
     found = []
+    mine = segments or [(truck, driver, start, end)]
     wanted = {value for value in (trailer_id, *trailer_ids) if value}
     plate = (trailer or "").casefold()
     spans = trailer_spans(db)
-    for row in db.execute("SELECT * FROM orders WHERE status!='Cancelled' AND id!=?", (exclude,)):
-        overlaps = lambda a, b: start < b and end > a
-        same = (row["truck_id"] == truck or row["driver_id"] == driver) and overlaps(parse_time(row["pickup_at"]), parse_time(row["available_at"]))
-        same = same or any((tid in wanted or (plate and text_plate.casefold() == plate)) and overlaps(a, b)
-                           for tid, text_plate, a, b in spans.get(row["id"], []))
+    for order_id, (number, parts) in all_segments(db, exclude).items():
+        same = any(((t and t == other[0]) or (d and d == other[1])) and a < other[3] and b > other[2]
+                   for t, d, a, b in mine for other in parts)
+        same = same or any((tid in wanted or (plate and text_plate.casefold() == plate)) and start < b and end > a
+                           for tid, text_plate, a, b in spans.get(order_id, []))
         if same:
-            found.append(row["number"])
+            found.append(number)
     return found
 
 
-def save_stops(db, order_id, stops, plan):
+def plan_segments(truck, driver, stops, plan):
+    """Tractor parts of an order being saved (stops with their planned times)."""
+    planned = [{"kind": stop["kind"], "seq": seq, "planned_at": times["start_at"], "planned_end_at": times["end_at"],
+                "done_at": None, "truck_id": (stop.get("truck") or {}).get("id"),
+                "driver_id": (stop.get("driver") or {}).get("id")}
+               for seq, (stop, times) in enumerate(zip(stops, plan["stops"]), start=1)]
+    order = {"truck_id": truck["id"], "driver_id": driver["id"], "pickup_at": plan["stops"][0]["start_at"],
+             "available_at": plan["available_at"]}
+    return [part[:4] for part in tractor_segments(order, planned)]
+
+
+def stored_segments(order, stops):
+    return [part[:4] for part in tractor_segments(order, stops)]
+
+
+def save_stops(db, order_id, stops, plan, tokens=None):
+    """`tokens`: the next drivers' links by stop number, kept when an order is edited."""
     db.execute("DELETE FROM order_stops WHERE order_id=?", (order_id,))
     for seq, (stop, times) in enumerate(zip(stops, plan["stops"]), start=1):
         drop, pick, material = stop.get("drop"), stop.get("pick"), stop.get("material")
         db.execute("""INSERT INTO order_stops (order_id, seq, kind, location_id, planned_at, planned_end_at,
                 handling_hours, leg_km, leg_hours, drop_trailer_id, drop_trailer, pick_trailer_id, pick_trailer,
-                material_id, material, weight_kg)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                material_id, material, weight_kg, truck_id, driver_id, driver_token)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (order_id, seq, stop["kind"], stop["location"]["id"], times["start_at"], times["end_at"],
              stop["handling_hours"], stop["leg_km"], stop["leg_hours"],
              drop["id"] if drop else None, drop["plate"] if drop else "",
              pick["id"] if pick else None, pick["plate"] if pick else "",
              material["id"] if material else None, material_label(material) if material else "",
-             stop.get("weight_kg")))
+             stop.get("weight_kg"), (stop.get("truck") or {}).get("id"), (stop.get("driver") or {}).get("id"),
+             (tokens or {}).get(seq) if stop["kind"] == "Tractor change" else None))
 
 
 def create_order(db, data):
@@ -273,7 +335,7 @@ def create_order(db, data):
     trailer_id = trailer_item["id"] if trailer_item else None
     picks = [stop["pick"]["id"] for stop in stops if stop.get("pick")]
     collision = conflicts(db, truck["id"], driver["id"], trailer, pickup, parse_time(plan["available_at"]), data.get("id",0),
-                          trailer_id=trailer_id, trailer_ids=picks)
+                          trailer_id=trailer_id, trailer_ids=picks, segments=plan_segments(truck, driver, stops, plan))
     if collision:
         busy = [row for row in db.execute("SELECT number, pickup_at, available_at FROM orders WHERE status!='Cancelled'")
                 if row["number"] in collision]
@@ -306,6 +368,9 @@ def create_order(db, data):
         order_id = existing["id"]
     else:
         order_id = reserve_id(db, "orders")
+    # The next drivers' links survive an edit.
+    tokens = {row["seq"]: row["driver_token"] for row in db.execute(
+        "SELECT seq, driver_token FROM order_stops WHERE order_id=? AND driver_token IS NOT NULL", (order_id,))} if data.get("id") else {}
     # Writes only from here on.
     for plate, trailer_new_id in new_trailers.items():
         db.execute("INSERT INTO trailers (id, plate) VALUES (?, ?)", (trailer_new_id, plate))
@@ -314,7 +379,7 @@ def create_order(db, data):
     else:
         values = {"id": order_id, "number": f"MT-{pickup.astimezone(ZONE).year}-{order_id:06d}", **values}
         db.execute("INSERT INTO orders ("+",".join(values)+") VALUES ("+",".join("?" for _ in values)+")",tuple(values.values()))
-    save_stops(db, order_id, stops, plan)
+    save_stops(db, order_id, stops, plan, tokens)
     return order_id
 
 
@@ -335,6 +400,61 @@ def attach_trailer(db, truck_id, trailer_id, plates):
         # A trailer is on one tractor at a time: another tractor that had it as current trailer loses it.
         db.execute("UPDATE trucks SET trailer_id=NULL, trailer='' WHERE trailer_id=? AND id!=?", (trailer_id, truck_id))
         db.execute("UPDATE trucks SET trailer_id=?, trailer=? WHERE id=?", (trailer_id, plate, truck_id))
+
+
+def segment_truck(order, stops, seq):
+    """The tractor that has the order at stop `seq` (after any tractor change before or at it)."""
+    truck = order["truck_id"]
+    for stop in stops:
+        if stop["seq"] <= seq and stop["kind"] == "Tractor change":
+            truck = stop.get("truck_id")
+    return truck
+
+
+def trailer_at(order, stops, seq):
+    """The trailer of the order when it reaches stop `seq` (after swaps before it)."""
+    trailer = order["trailer_id"]
+    for stop in stops:
+        if stop["seq"] < seq and stop["kind"] == "Trailer swap":
+            trailer = stop["pick_trailer_id"]
+    return trailer
+
+
+def assign_tractor(db, data):
+    """Choose (or change) the tractor that takes the trailer at a tractor change, also once the order is on its way."""
+    order = item(db, "orders", data.get("order_id"))
+    if order["status"] in ("Cancelled", "Completed"):
+        raise ValueError(f"This order is {order['status'].lower()}.")
+    stops = order_stop_rows(db, order["id"])
+    try:
+        stop = next(s for s in stops if s["seq"] == int(data.get("seq")) and s["kind"] == "Tractor change")
+    except (TypeError, ValueError, StopIteration):
+        raise ValueError("Choose a valid tractor change.") from None
+    truck = item(db, "trucks", data["truck_id"]) if data.get("truck_id") else None
+    driver_id = data.get("driver_id") or (truck["driver_id"] if truck else None)
+    driver = item(db, "drivers", driver_id) if driver_id else None
+    if truck and truck["id"] == segment_truck(order, stops, stop["seq"] - 1):
+        raise ValueError("Choose a different tractor than the one that brings the trailer.")
+    if stop["status"] == "Done" and stop.get("truck_id"):
+        raise ValueError("The trailer was already taken at this stop. Undo the confirmation to change the tractor.")
+    begin_write(db)
+    same_driver = stop.get("driver_id") == (driver["id"] if driver else None)
+    stop.update(truck_id=truck["id"] if truck else None, driver_id=driver["id"] if driver else None)
+    if truck or driver:
+        part = [p[:4] for p in tractor_segments(order, stops) if p[4] == stop["seq"]]
+        clash = conflicts(db, None, None, "", parse_time(order["pickup_at"]), parse_time(order["available_at"]),
+                          order["id"], segments=part)
+        if clash:
+            raise ValueError(f"{truck['plate'] if truck else driver['name']} is already on {', '.join(clash)} at that time.")
+    # Another driver gets a new link; the old one stops working.
+    db.execute("UPDATE order_stops SET truck_id=?, driver_id=?, driver_token=? WHERE id=?",
+               (stop["truck_id"], stop["driver_id"], stop.get("driver_token") if same_driver else None, stop["id"]))
+    if stop["status"] == "Done" and truck:
+        # Already left there: the new tractor takes it now.
+        plates = {row["id"]: row["plate"] for row in db.execute("SELECT id, plate FROM trailers")}
+        attach_trailer(db, truck["id"], trailer_at(order, stops, stop["seq"]), plates)
+    place = item(db, "locations", stop["location_id"])["city"]
+    return {"message": f"{truck['plate'] if truck else 'No tractor'} takes the trailer in {place}."}
 
 
 def set_stop_status(db, data):
@@ -369,7 +489,15 @@ def set_stop_status(db, data):
             attach_trailer(db, order["truck_id"], order["trailer_id"], plates)
         if stop["kind"] == "Trailer swap":
             park_trailer(db, stop["drop_trailer_id"], stop["location_id"], stamp(at))
-            attach_trailer(db, order["truck_id"], stop["pick_trailer_id"], plates)
+            attach_trailer(db, segment_truck(order, stops, seq - 1), stop["pick_trailer_id"], plates)
+        if stop["kind"] == "Tractor change":
+            trailer_now = trailer_at(order, stops, seq)
+            if stop["truck_id"]:
+                attach_trailer(db, stop["truck_id"], trailer_now, plates)
+            else:
+                # Nobody takes it yet: it waits, loaded, where it was left.
+                park_trailer(db, trailer_now, stop["location_id"], stamp(at))
+                db.execute("UPDATE trucks SET trailer_id=NULL, trailer='' WHERE trailer_id=?", (trailer_now,))
         message = f"{stop['kind']} in {place} confirmed."
     else:
         later = [s for s in stops if s["seq"] > seq and s["status"] == "Done"]
@@ -381,12 +509,16 @@ def set_stop_status(db, data):
         if stop["kind"] == "Trailer swap":
             # Back to the situation before the swap: the picked trailer waits at the swap point.
             park_trailer(db, stop["pick_trailer_id"], stop["location_id"], undone_at)
+            here = segment_truck(order, stops, seq - 1)
             if stop["drop_trailer_id"]:
-                attach_trailer(db, order["truck_id"], stop["drop_trailer_id"], plates)
+                attach_trailer(db, here, stop["drop_trailer_id"], plates)
             else:
                 # The tractor arrived at the swap without a trailer: it no longer has the picked one.
                 db.execute("UPDATE trucks SET trailer_id=NULL, trailer='' WHERE id=? AND trailer_id=?",
-                           (order["truck_id"], stop["pick_trailer_id"]))
+                           (here, stop["pick_trailer_id"]))
+        if stop["kind"] == "Tractor change":
+            # Back on the tractor that brought it.
+            attach_trailer(db, segment_truck(order, stops, seq - 1), trailer_at(order, stops, seq), plates)
         message = f"{stop['kind']} in {place} set back to planned."
     done = [s for s in stops if s["status"] == "Done"]
     status = "Completed" if len(done) == len(stops) else "In transit" if done else "Planned"
@@ -400,8 +532,10 @@ def set_stop_status(db, data):
                (status, delivered, available, order["id"]))
     warning = ""
     if delivered:
+        ended = {**order, "available_at": available}
         clash = conflicts(db, order["truck_id"], order["driver_id"], order["trailer"], parse_time(order["pickup_at"]),
-                          parse_time(available), order["id"], trailer_id=order["trailer_id"])
+                          parse_time(available), order["id"], trailer_id=order["trailer_id"],
+                          segments=stored_segments(ended, stops))
         if clash:
             warning = f"The confirmed delivery overlaps with {', '.join(clash)}. Check the next order."
     return {"status": status, "message": message, "warning": warning}
@@ -444,9 +578,11 @@ def update_stop_eta(db, data):
     message = f"New ETA in {place}: {stop['planned_at'][11:16]}"
     if stop is not last:
         message += f"; delivery now {last['planned_at'][8:10]}.{last['planned_at'][5:7]} {last['planned_at'][11:16]}"
+    moved = {**order, "pickup_at": first["planned_at"], "available_at": last["planned_end_at"]}
     clash = conflicts(db, order["truck_id"], order["driver_id"], order["trailer"], parse_time(first["planned_at"]),
                       parse_time(last["planned_end_at"]), order["id"], trailer_id=order["trailer_id"],
-                      trailer_ids=[s["pick_trailer_id"] for s in stops if s["pick_trailer_id"]])
+                      trailer_ids=[s["pick_trailer_id"] for s in stops if s["pick_trailer_id"]],
+                      segments=stored_segments(moved, stops))
     return {"message": message + ".", "warning": ("Now overlaps with " + ", ".join(clash) + ". Check the next order.") if clash else ""}
 
 
