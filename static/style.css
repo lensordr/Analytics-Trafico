@@ -175,3 +175,8 @@
 .nearby-new{margin:0 0 12px 8px;vertical-align:top}
 .search-more{margin:6px 10px;font-size:10px;color:var(--muted)}
 .directory-cards .span-all{grid-column:1/-1;margin:0}
+
+/* Journey cards open the journey details on click. */
+.journey-row[data-order-id],.board-journey[data-order-id]{cursor:pointer}
+.journey-row[data-order-id]:hover>td{background:var(--hover,rgba(37,99,235,.05))}
+.board-journey[data-order-id]:hover{box-shadow:0 0 0 2px rgba(37,99,235,.35)}
