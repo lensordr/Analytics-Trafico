@@ -165,3 +165,9 @@
 @media (max-width:900px){.tariff-row{grid-template-columns:minmax(0,1fr) 14px minmax(0,1fr)}.tariff-client,.tariff-rate,.tariff-km,.tariff-row .actions{grid-column:1 / -1}}
 .tariff-choices .geo-option{margin:0}.tariff-choices .geo-option>*{display:block}
 .search-select-menu{min-width:min(460px,80vw)}
+
+/* Next loads (saved routes near a free truck) */
+.nearby-tabs{display:inline-flex;margin:4px 0 12px}.nearby-search{flex:1;min-width:180px}
+.next-load-route{margin:3px 0 0;font-size:12px}.next-load-route small{color:var(--muted)}
+.next-load.late{background:#fffaf2;border-color:#f0dfbf}
+.next-load .nearby-km{text-align:right}.next-load .nearby-km small{display:block;font-size:10px;font-weight:500;color:var(--muted)}

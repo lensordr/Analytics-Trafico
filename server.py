@@ -25,6 +25,7 @@ from masters import archive_master, restore_master, save_master
 from materials import delete_material, save_material
 from tariffs import delete_tariff, save_tariff
 from nearby import log_contact, nearby_companies
+from nextloads import next_loads
 from orders import build_plan, carry_clock, create_order, set_stop_status, update_stop_eta, uses_rules
 from planner import UTC, parse_time, stamp
 from storage import TursoReplica, backup_to, connect, rows
@@ -291,6 +292,8 @@ class Handler(BaseHTTPRequestHandler):
                     result = delete_material(db,data)
                 elif path == "/api/itv-import":
                     result = import_itv(db,data)
+                elif path == "/api/next-loads":
+                    result = next_loads(db,data)
                 elif path == "/api/nearby":
                     result = nearby_companies(db,data)
                 elif path == "/api/location-contact":

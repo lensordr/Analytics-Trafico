@@ -141,11 +141,25 @@ truck. Refresh fetches the latest saved planning. Trucks missing a
 known location/time are listed separately. This is planned availability, not
 live tracking or confirmation of remaining driving time.
 
-“Companies nearby” on each free window lists the saved companies around the
-truck's free position, closest first (straight-line distance; coordinates
-required, otherwise only the same city). Each company shows its type, contact
-details, notes, load history (how many loads, where they went) and the last
-logged contact. “Log contact” records the result of a call. No live GPS.
+“Next loads” on each free window opens two tabs:
+
+- **Saved routes** (default): the active tariffs whose loading point is within
+  the radius of the truck's free position. Each route shows empty km, loaded km
+  (the tariff's km), km back to the home base, the price (per tonne at the
+  chosen load, default 25 t), € per hour of work and € per km, when it unloads,
+  and when the driver is home. “✓ Home …” = back at the base before Saturday
+  ends; “✗ … after the weekend” otherwise. From Thursday on, routes that get the
+  driver home come first. Drivers marked “Stays on the road at weekends”
+  (Drivers → Edit), or the checkbox in the window, skip that check.
+  “Create order” opens a new order with the client, route, tariff and truck filled
+  in. Times are estimates: 65 km/h, 2 h loading and 2 h unloading (the order default), breaks and daily
+  rest, the driver rested when the truck becomes free; empty and return legs are
+  straight-line × 1.25. The home base is set in Settings (default: the Parking
+  location named “… base …”).
+- **Companies**: the saved companies around the truck's free position, closest
+  first (straight-line distance; coordinates required, otherwise only the same
+  city), with contact details, load history and the last logged contact. “Log
+  contact” records the result of a call. No live GPS.
 
 ## Materials
 
@@ -294,7 +308,7 @@ Server (Python, standard library + libsql):
 - `app.py` starts the server; `server.py` routes requests (login, driver page, API, files)
 - `common.py` input helpers · `masters.py` tractors, trailers, drivers, locations
 - `orders.py` journeys, timing, conflicts, confirmations · `materials.py` · `tariffs.py` · `itv.py`
-- `nearby.py` companies near a free truck · `driverlinks.py` + `driver.py` driver page
+- `nearby.py` companies near a free truck · `nextloads.py` saved routes near a free truck, home for the weekend · `driverlinks.py` + `driver.py` driver page
 - `deca.py` + `qr.py` Documento de Control · `planner.py` EU driving rules
 - `storage.py` SQLite / Turso · `autobackup.py` daily backup · `auth.py` login
 

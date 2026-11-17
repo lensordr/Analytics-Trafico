@@ -331,6 +331,8 @@ def initialize(target):
         columns = {row["name"] for row in db.execute("PRAGMA table_info(drivers)")}
         if "dni_nie" not in columns:
             db.execute("ALTER TABLE drivers ADD COLUMN dni_nie TEXT NOT NULL DEFAULT ''")
+        if "weekend_away" not in columns:  # 1 = stays on the road at weekends (no return to the base)
+            db.execute("ALTER TABLE drivers ADD COLUMN weekend_away INTEGER NOT NULL DEFAULT 0")
         for table in ("trucks", "orders"):
             columns = {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
             if "trailer_id" not in columns:

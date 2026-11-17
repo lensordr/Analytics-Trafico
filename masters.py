@@ -60,6 +60,7 @@ def save_master(db, kind, data):
         values = {"name": text(data, "name"), "phone": text(data, "phone", False, 60),
                   "dni_nie": document,
                   "carrier": text(data, "carrier", False) or "MalcomTrans",
+                  "weekend_away": 1 if data.get("weekend_away") else 0,
                   "active": 1 if data.get("active", True) else 0}
     elif kind == "trailers":
         values = {"plate":text(data,"plate",True,30).upper(),

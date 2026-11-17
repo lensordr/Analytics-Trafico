@@ -242,6 +242,48 @@ class DispatchTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,"result of the contact"):
                 app.log_contact(db,{"location_id":toledo,"result":"Maybe"})
 
+    def test_next_loads_from_saved_routes_and_weekend_home(self):
+        from datetime import timedelta
+        import deca
+        from nextloads import QuickClock, weekend_deadline
+        clock = QuickClock(parse_time("2030-01-07T08:00"))
+        clock.drive(650)  # 600 min: 4.5 h, break, 4.5 h, daily rest, 1 h
+        self.assertEqual(clock.t - parse_time("2030-01-07T08:00"), timedelta(minutes=270 + 45 + 270 + 660 + 60))
+        self.assertEqual(stamp(weekend_deadline(parse_time("2030-01-10T08:00"))), stamp(parse_time("2030-01-13T00:00")))
+        self.assertEqual(stamp(weekend_deadline(parse_time("2030-01-13T10:00"))), stamp(parse_time("2030-01-20T00:00")))
+        with connect(self.database) as db:
+            base = app.save_master(db, "locations", {"company": "Our base", "city": "Madrid", "postal_code": "28002", "country": "Spain",
+                                                     "lat": 40.43, "lon": -3.69, "kind": "Parking"})
+            getafe = app.save_master(db, "locations", {"company": "Getafe Foods", "city": "Getafe", "postal_code": "28901", "country": "Spain",
+                                                       "lat": 40.30, "lon": -3.73})
+            toledo = app.save_master(db, "locations", {"company": "Toledo Steel", "city": "Toledo", "postal_code": "45001", "country": "Spain",
+                                                       "lat": 39.86, "lon": -4.02})
+            short = app.save_tariff(db, {"client_id": getafe, "from_id": getafe, "to_id": toledo, "basis": "trip", "rate": 100, "km": 70})
+            far = app.save_tariff(db, {"client_id": getafe, "from_id": getafe, "to_id": self.b, "basis": "loading_t", "rate": 60, "km": 1270})
+            app.save_tariff(db, {"client_id": getafe, "from_id": self.b, "to_id": self.a, "basis": "trip", "rate": 900, "km": 1270})
+            app.save_tariff(db, {"client_id": getafe, "from_id": getafe, "to_id": toledo, "basis": "trip", "rate": 5, "active": False})
+            with self.assertRaisesRegex(ValueError, "Home base"):
+                deca.save_settings(db, {"home_base_id": "999999"})
+            thursday = app.next_loads(db, {"location_id": self.a, "radius_km": 100, "from": "2030-01-10T08:00", "driver_id": self.driver},
+                                      now=parse_time("2030-01-01T10:00"))
+            self.assertEqual(thursday["base"]["id"], base)  # found by name without a setting
+            self.assertEqual([r["tariff"]["id"] for r in thursday["routes"]], [short, far])  # Paris loading and inactive left out
+            first, second = thursday["routes"]
+            self.assertTrue(thursday["towards_home"])
+            self.assertEqual((first["home_for_weekend"], second["home_for_weekend"]), (True, False))
+            self.assertEqual(second["revenue"], 1500)
+            self.assertGreater(second["per_km"], first["per_km"])  # better paid, but not home for the weekend
+            monday = app.next_loads(db, {"location_id": self.a, "radius_km": 100, "from": "2030-01-07T08:00"}, now=parse_time("2030-01-01T10:00"))
+            self.assertEqual([r["tariff"]["id"] for r in monday["routes"]], [far, short])  # early in the week: by € per km
+            app.save_master(db, "drivers", {"id": self.driver, "name": "Test Driver", "weekend_away": True})
+            away = app.next_loads(db, {"location_id": self.a, "radius_km": 100, "from": "2030-01-10T08:00", "driver_id": self.driver},
+                                  now=parse_time("2030-01-01T10:00"))
+            self.assertTrue(away["weekend_away"])
+            self.assertEqual([r["home_for_weekend"] for r in away["routes"]], [None, None])
+            self.assertEqual(away["routes"][0]["tariff"]["id"], far)
+            deca.save_settings(db, {"home_base_id": str(toledo)})
+            self.assertEqual(app.next_loads(db, {"location_id": self.a, "weekend_away": False})["base"]["id"], toledo)
+
     def test_location_profile_validation_and_kept_on_partial_edit(self):
         with connect(self.database) as db:
             with self.assertRaisesRegex(ValueError,"company type"):
