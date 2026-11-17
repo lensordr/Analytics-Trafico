@@ -1,8 +1,8 @@
 """Client tariffs (price per route) and the price of an order.
 
 A tariff says what a client pays for a route from one saved location to another:
-  loading_t   € per tonne of the weight loaded
-  unloading_t € per tonne of the weight unloaded
+  loading_t   € per tonne of the weight loaded   (billed on at least MIN_BILLED_KG)
+  unloading_t € per tonne of the weight unloaded (billed on at least MIN_BILLED_KG)
   trip        fixed € per trip
   hour        € per hour (the total is entered on the order)
 Orders keep a copy of the basis and rate, so later tariff changes never alter past orders.
@@ -13,6 +13,7 @@ from common import identity, item, text
 from planner import number
 
 BASES = ("loading_t", "unloading_t", "trip", "hour")
+MIN_BILLED_KG = 24000  # per-tonne prices are billed on 24 t even when less is loaded
 
 
 def chosen(db, table, value):
@@ -83,7 +84,7 @@ def order_price(db, data, stops):
 
 
 def order_amount(order, stops):
-    """Price of an order in €, or None when it cannot be calculated yet (no rate or no weight)."""
+    """Price of an order in €, or None when it cannot be calculated (no rate, or a price per hour)."""
     if order.get("price_eur") is not None:
         return order["price_eur"]
     basis, rate = order.get("rate_basis"), order.get("rate")
@@ -93,11 +94,11 @@ def order_amount(order, stops):
         return round(rate, 2)
     loaded = sum(stop["weight_kg"] or 0 for stop in stops if stop["kind"] == "Loading")
     if basis == "loading_t":
-        return round(loaded / 1000 * rate, 2) if loaded else None
+        return round(max(loaded, MIN_BILLED_KG) / 1000 * rate, 2)
     if basis == "unloading_t":
         unloads = [stop for stop in stops if stop["kind"] == "Unloading"]
         unloaded = sum(stop["weight_kg"] or 0 for stop in unloads[:-1])
         # Final unloading without a weight = everything still on the truck.
         unloaded += unloads[-1]["weight_kg"] if unloads and unloads[-1]["weight_kg"] else max(loaded - unloaded, 0)
-        return round(unloaded / 1000 * rate, 2) if unloaded else None
+        return round(max(unloaded, MIN_BILLED_KG) / 1000 * rate, 2)
     return None

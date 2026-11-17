@@ -136,8 +136,11 @@ class DispatchTests(unittest.TestCase):
         # The client comes from the tariff; the order keeps its own copy of the rate.
         self.assertEqual((order["client_id"], order["tariff_id"], order["rate_basis"], order["rate"]), (client, tariff, "loading_t", 5.78))
         self.assertEqual(order_amount(order, stops), 138.72)
-        stops[-1]["weight_kg"] = 23000
-        self.assertEqual(order_amount({**order, "rate_basis": "unloading_t"}, stops), 132.94)
+        stops[-1]["weight_kg"] = 23500
+        self.assertEqual(order_amount({**order, "rate_basis": "unloading_t"}, stops), 138.72)  # billed on the 24 t minimum
+        stops[-1]["weight_kg"] = 25000
+        self.assertEqual(order_amount({**order, "rate_basis": "unloading_t"}, stops), 144.5)
+        self.assertEqual(order_amount({**order}, [{**stop, "weight_kg": None} for stop in stops]), 138.72)  # no weight yet: the minimum
         self.assertEqual(order_amount({**order, "rate_basis": "trip", "rate": 750}, stops), 750)
         self.assertIsNone(order_amount({**order, "rate_basis": "hour", "rate": 60}, stops))
         self.assertEqual(order_amount({**order, "price_eur": 99.5}, stops), 99.5)
@@ -271,8 +274,8 @@ class DispatchTests(unittest.TestCase):
             first, second = thursday["routes"]
             self.assertTrue(thursday["towards_home"])
             self.assertEqual((first["home_for_weekend"], second["home_for_weekend"]), (True, False))
-            self.assertEqual(second["revenue"], 1500)
-            self.assertGreater(second["per_km"], first["per_km"])  # better paid, but not home for the weekend
+            self.assertEqual(second["revenue"], 1440)  # 60 €/t × the 24 t minimum
+            self.assertGreater(second["per_hour"], first["per_hour"])  # better paid, but not home for the weekend
             monday = app.next_loads(db, {"location_id": self.a, "radius_km": 100, "from": "2030-01-07T08:00"}, now=parse_time("2030-01-01T10:00"))
             self.assertEqual([r["tariff"]["id"] for r in monday["routes"]], [far, short])  # early in the week: by € per km
             app.save_master(db, "drivers", {"id": self.driver, "name": "Test Driver", "weekend_away": True})

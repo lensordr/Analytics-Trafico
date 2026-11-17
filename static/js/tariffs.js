@@ -19,12 +19,17 @@ function refreshUnloadingPicker(form){const wrapper=form.querySelector('[data-se
 const companyName=id=>getLocation(id)?.company||'Unknown';
 
 // ---------------------------------------------------------------- Price of an order (same rules as tariffs.order_amount)
+// Per-tonne prices are billed on at least MIN_BILLED_T (same rule as tariffs.MIN_BILLED_KG).
+const MIN_BILLED_T=24;
+function billedKg(basis,loads,unloads,finalUnload){const loaded=loads.reduce((sum,w)=>sum+(Number(w)||0),0);if(basis==='loading_t')return loaded;
+  let unloaded=unloads.reduce((sum,w)=>sum+(Number(w)||0),0);unloaded+=Number(finalUnload)||Math.max(loaded-unloaded,0);return unloaded;}
 function priceFromWeights(basis,rate,loads,unloads,finalUnload){if(rate==null||rate===''||!basis)return null;rate=Number(rate);if(basis==='trip')return rate;if(basis==='hour')return null;
-  const loaded=loads.reduce((sum,w)=>sum+(Number(w)||0),0);if(basis==='loading_t')return loaded?Math.round(loaded/1000*rate*100)/100:null;
-  let unloaded=unloads.reduce((sum,w)=>sum+(Number(w)||0),0);unloaded+=Number(finalUnload)||Math.max(loaded-unloaded,0);return unloaded?Math.round(unloaded/1000*rate*100)/100:null;}
+  return Math.round(Math.max(billedKg(basis,loads,unloads,finalUnload),MIN_BILLED_T*1000)/1000*rate*100)/100;}
+const minimumNote=(basis,kg)=>['loading_t','unloading_t'].includes(basis)&&kg<MIN_BILLED_T*1000?` · billed on the ${MIN_BILLED_T} t minimum`:'';
+function orderBilledKg(o){const stops=orderStops(o),unloads=stops.filter(s=>s.kind==='Unloading');return billedKg(o.rate_basis,stops.filter(s=>s.kind==='Loading').map(s=>s.weight_kg),unloads.slice(0,-1).map(s=>s.weight_kg),unloads.at(-1)?.weight_kg);}
 function orderAmount(o){if(o.price_eur!=null)return o.price_eur;const stops=orderStops(o),unloads=stops.filter(s=>s.kind==='Unloading');
   return priceFromWeights(o.rate_basis,o.rate,stops.filter(s=>s.kind==='Loading').map(s=>s.weight_kg),unloads.slice(0,-1).map(s=>s.weight_kg),unloads.at(-1)?.weight_kg);}
-function orderPriceLine(o){const amount=orderAmount(o);if(amount==null&&!o.rate_basis&&o.price_eur==null)return '';return `<div class="detail-grid"><div><h3>Client & price</h3><p><strong>${esc(o.client_id?companyName(o.client_id):'Client not set')}</strong> · ${o.price_eur!=null?'agreed total':esc(rateText(o.rate_basis,o.rate))}</p><p class="price-total">${amount!=null?euro(amount):o.rate_basis==='hour'?'Enter the total when the hours are known (Edit).':'Enter the weight to calculate the price.'}</p></div></div>`;}
+function orderPriceLine(o){const amount=orderAmount(o);if(amount==null&&!o.rate_basis&&o.price_eur==null)return '';return `<div class="detail-grid"><div><h3>Client & price</h3><p><strong>${esc(o.client_id?companyName(o.client_id):'Client not set')}</strong> · ${o.price_eur!=null?'agreed total':esc(rateText(o.rate_basis,o.rate))}</p><p class="price-total">${amount!=null?euro(amount)+(o.price_eur==null?minimumNote(o.rate_basis,orderBilledKg(o)):''):o.rate_basis==='hour'?'Enter the total when the hours are known (Edit).':'Enter the weight to calculate the price.'}</p></div></div>`;}
 
 // ---------------------------------------------------------------- Tariffs tab
 const searchWords=value=>searchNorm(value||'').split(' ').filter(Boolean);
@@ -58,7 +63,7 @@ function priceSection(draft){return `<div class="span-2 section-title">Client & 
 function formWeights(form){const via=[...form.querySelectorAll('[data-via]')].map(row=>({kind:row.dataset.kind,w:row.querySelector('[data-via-field="weight_kg"]')?.value}));
   return {loads:[form.elements.loading_weight_kg.value,...via.filter(v=>v.kind==='Loading').map(v=>v.w)],unloads:via.filter(v=>v.kind==='Unloading').map(v=>v.w),final:form.elements.unloading_weight_kg.value};}
 function updatePricePreview(form){const box=$('#price-preview',form);if(!box)return;const e=form.elements;const row=$('#save-tariff-row',form);if(row)row.hidden=!(!e.tariff_id.value&&e.client_id.value&&e.loading_id.value&&e.unloading_id.value&&e.rate_basis.value&&e.rate.value!==''&&!routeTariffs(e.loading_id.value,e.unloading_id.value,e.client_id.value).length);if(e.price_eur.value!==''){box.textContent=euro(e.price_eur.value)+' · agreed total';return;}const w=formWeights(form),amount=priceFromWeights(e.rate_basis.value,e.rate.value,w.loads,w.unloads,w.final);
-  box.textContent=amount!=null?euro(amount):e.rate_basis.value==='hour'?'Per hour: enter the agreed total when known':e.rate_basis.value?'Enter the price and weight':'—';}
+  box.textContent=amount!=null?euro(amount)+minimumNote(e.rate_basis.value,billedKg(e.rate_basis.value,w.loads,w.unloads,w.final)):e.rate_basis.value==='hour'?'Per hour: enter the agreed total when known':e.rate_basis.value?'Enter the price and weight':'—';}
 function applyTariff(form,t){const e=form.elements;e.tariff_id.value=t.id;setSearchSelectValue(form,'client_id',t.client_id);e.rate_basis.value=t.basis;e.rate.value=t.rate;syncTariffBox(form,false);}
 function syncTariffBox(form,auto=true){const box=$('#tariff-box',form);if(!box)return;const e=form.elements,from=e.loading_id.value,to=e.unloading_id.value;
   if(!from||!to){box.innerHTML='';updatePricePreview(form);return;}

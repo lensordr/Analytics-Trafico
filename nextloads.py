@@ -11,6 +11,7 @@ import deca
 import routing
 from common import item
 from orders import DEFAULT_HANDLING_HOURS
+from tariffs import MIN_BILLED_KG
 from planner import UTC, ZONE, number, parse_time, stamp
 from storage import rows
 
@@ -82,7 +83,7 @@ def weekend_deadline(start):
 def next_loads(db, data, now=None):
     origin = item(db, "locations", data.get("location_id"))
     radius = number(data, "radius_km", 150, 5, 2000)
-    load_t = number(data, "load_t", 25, 1, 45)
+    load_t = max(number(data, "load_t", MIN_BILLED_KG / 1000, 1, 45), MIN_BILLED_KG / 1000)  # never below the billed minimum
     now = (now or datetime.now(UTC)).astimezone(UTC).replace(second=0, microsecond=0)
     start = max(parse_time(data["from"]), now) if data.get("from") else now
     driver = item(db, "drivers", data["driver_id"]) if data.get("driver_id") else None

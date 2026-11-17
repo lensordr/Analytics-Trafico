@@ -146,7 +146,7 @@ live tracking or confirmation of remaining driving time.
 - **Saved routes** (default): the active tariffs whose loading point is within
   the radius of the truck's free position. Each route shows empty km, loaded km
   (the tariff's km), km back to the home base, the price (per tonne at the
-  chosen load, default 25 t), € per hour of work and € per km, when it unloads,
+  chosen load, at least the 24 t billed minimum), € per hour of work and € per km, when it unloads,
   and when the driver is home. “✓ Home …” = back at the base before Saturday
   ends; “✗ … after the weekend” otherwise. From Thursday on, routes that get the
   driver home come first. Drivers marked “Stays on the road at weekends”
@@ -179,7 +179,9 @@ one active tariff per route and price type; untick Active to keep an older price
 In the order form, choosing the loading and unloading point finds the tariffs
 for that route. When there is exactly one, it is applied (client, price type,
 price); otherwise pick one. The price is calculated from the weights on the
-order (an empty final unloading weight = everything still on the truck). For
+order (an empty final unloading weight = everything still on the truck). Prices
+per tonne are billed on at least 24 t (`MIN_BILLED_KG` in `tariffs.py`), also
+when less is loaded or the weight is not entered yet. For
 hourly prices, or any fixed amount, enter the agreed total. The order keeps its
 own copy of the price, so changing or deleting a tariff never alters past orders.
 
