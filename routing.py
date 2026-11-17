@@ -3,6 +3,8 @@ import json
 import math
 import os
 import re
+import threading
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -115,3 +117,41 @@ def air_distance(a, b):
     dlat, dlon = lat2-lat1, math.radians(b["lon"]-a["lon"])
     h = math.sin(dlat/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin(dlon/2)**2
     return round(6371*2*math.asin(min(1, math.sqrt(h))), 1)
+
+
+# ---- Map background: HERE raster tiles through our server (the API key stays on the server). Cached in memory.
+TILE_CACHE, TILE_CACHE_SIZE, TILE_LOCK = OrderedDict(), 3000, threading.Lock()
+
+
+def map_tile(z, x, y):
+    """PNG of one 256 px map tile (web mercator z/x/y)."""
+    if not (0 <= z <= 19 and 0 <= x < 2 ** z and 0 <= y < 2 ** z):
+        raise ValueError("Invalid tile.")
+    key = (z, x, y)
+    with TILE_LOCK:
+        if key in TILE_CACHE:
+            TILE_CACHE.move_to_end(key)
+            return TILE_CACHE[key]
+    api = api_key()
+    if not api:
+        raise ValueError("HERE is not configured.")
+    url = (f"https://maps.hereapi.com/v3/base/mc/{z}/{x}/{y}/png8?"
+           + urlencode({"apiKey": api, "style": "explore.day", "size": 256}))
+    try:
+        with urlopen(url, timeout=15) as response:
+            if not response.headers.get("Content-Type", "").startswith("image/"):
+                raise ValueError("HERE did not return a map image.")
+            body = response.read(2_000_000)
+    except (HTTPError, URLError, TimeoutError, OSError):
+        raise ValueError("HERE map tiles could not be loaded.") from None
+    with TILE_LOCK:
+        TILE_CACHE[key] = body
+        while len(TILE_CACHE) > TILE_CACHE_SIZE:
+            TILE_CACHE.popitem(last=False)
+    return body
+
+
+def road_km(origin, destination, truck):
+    """Truck road distance and driving time between two points (HERE), for the closest-truck search."""
+    route = truck_route(origin, destination, truck, "any")
+    return {"distance_km": route["distance_km"], "driving_hours": route["driving_hours"]}

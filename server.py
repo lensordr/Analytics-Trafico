@@ -64,7 +64,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Vary","Accept-Encoding")
         for name, value in (headers or {}).items():
             self.send_header(name, value)
-        self.send_header("Cache-Control","no-store")
+        if "Cache-Control" not in (headers or {}):
+            self.send_header("Cache-Control","no-store")
         self.send_header("X-Content-Type-Options","nosniff")
         self.send_header("Referrer-Policy","no-referrer")
         if self.https():
@@ -222,6 +223,13 @@ class Handler(BaseHTTPRequestHandler):
             return self.wfile.write(body)
         if path not in ("/style.css","/driver.css") and not self.signed_in():
             return self.send_body(401,{"error":"Please sign in again."}) if path.startswith("/api/") else self.redirect("/login")
+        tile = re.fullmatch(r"/tiles/(\d{1,2})/(\d{1,7})/(\d{1,7})\.png", path)
+        if tile:
+            try:
+                body = routing.map_tile(*(int(value) for value in tile.groups()))
+            except ValueError:
+                return self.send_body(404, {"error": "No map tile"})
+            return self.send_body(200, body, "image/png", {"Cache-Control": "private, max-age=604800"})
         if path == "/api/state":
             with connect(self.server.database) as db:
                 state = {key:rows(db,key) for key in ("drivers","trucks","trailers","locations","orders")}
@@ -335,6 +343,10 @@ class Handler(BaseHTTPRequestHandler):
                     result = update_stop_eta(db,data)
                 elif path == "/api/assign-tractor":
                     result = assign_tractor(db,data)
+                elif path == "/api/road-km":
+                    point = lambda prefix: {"lat": float(data[prefix + "_lat"]), "lon": float(data[prefix + "_lon"])}
+                    truck = item(db, "trucks", data.get("truck_id"))
+                    result = routing.road_km(point("from"), point("to"), truck)
                 elif path == "/api/geocode":
                     result = {"matches":routing.geocode(text(data,"query",True,600))}
                 elif path == "/api/upcoming":

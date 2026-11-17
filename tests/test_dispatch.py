@@ -1097,6 +1097,15 @@ class DispatchTests(unittest.TestCase):
             self.assertNotIn("Content-Encoding", call("GET", "/api/state", headers=session)[1])  # no gzip asked: plain
             for bad in ("/js/../app.py", "/js/missing.js", "/js/Core.js", "/app.js"):
                 self.assertEqual(call("GET", bad, headers=session)[0], 404, bad)
+            # Map tiles come through the server (HERE key stays there), only when signed in, cached by the browser.
+            import routing
+            with patch.object(routing, "map_tile", return_value=b"\x89PNG tile") as tile:
+                status, headers, body = call("GET", "/tiles/6/32/23.png", headers=session)
+                self.assertEqual((status, headers["Content-Type"], body, headers["Cache-Control"]),
+                                 (200, "image/png", b"\x89PNG tile", "private, max-age=604800"))
+                tile.assert_called_once_with(6, 32, 23)
+                self.assertNotEqual(call("GET", "/tiles/6/32/23.png")[0], 200)  # not signed in
+            self.assertEqual(call("GET", "/tiles/30/0/0.png", headers=session)[0], 404)  # outside the world
             # The lockout follows Cloudflare's address: a faked X-Forwarded-For does not get around it.
             with patch.object(app.time, "sleep"):
                 for attempt in range(8):
