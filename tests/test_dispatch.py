@@ -185,6 +185,18 @@ class DispatchTests(unittest.TestCase):
         self.assertTrue(rows["1. Carga"].endswith("— XATARRA, 25.560 kg"))
         self.assertTrue(rows["2. Descarga"].endswith("— XATARRA, 25.560 kg"))
         self.assertEqual(doc["notes"], "—")  # observations were cleared by the second call
+        # After the loading is confirmed the order form is closed: material and weight are set in the DeCA dialog.
+        with connect(self.database) as db:
+            steel = app.save_material(db, {"code": "06", "name": "INOX"})
+            app.set_stop_status(db, {"order_id": order_id, "seq": 1})
+            with self.assertRaisesRegex(ValueError, "between 1 and 60000"):
+                deca.prepare(db, {"order_id": order_id, "shipper_id": shipper, "loads": [{"seq": 1, "material_id": steel, "weight_kg": "0"}]})
+            with self.assertRaisesRegex(ValueError, "Invalid loading stop"):
+                deca.prepare(db, {"order_id": order_id, "shipper_id": shipper, "loads": [{"seq": 2, "material_id": steel, "weight_kg": 1}]})
+        with connect(self.database) as db:
+            deca.prepare(db, {"order_id": order_id, "shipper_id": shipper, "loads": [{"seq": 1, "material_id": steel, "weight_kg": "24100"}]})
+            rows = dict(deca.document(db, order_id)["rows"])
+        self.assertTrue(rows["1. Carga"].endswith("— INOX, 24.100 kg"))
         self.assertTrue(name.endswith(".pdf") and body.startswith(b"%PDF-1.4") and body.rstrip().endswith(b"%%EOF"))
         self.assertIn(b"(Documento de Control \\(DeCA\\)) Tj", body)
         self.assertIn(first["id"].encode(), body)

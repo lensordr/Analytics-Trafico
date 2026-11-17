@@ -8,6 +8,7 @@ so it can be read offline by any phone (the app is local: a link to it would not
 from datetime import datetime
 import secrets
 
+from materials import material_label
 from planner import UTC, ZONE, parse_time, stamp
 import qr
 
@@ -153,6 +154,41 @@ def document(db, order_id, shipper_id=None, notes=None):
     }
 
 
+def save_loads(db, order, loads):
+    """Material and weight of the loading stops, entered in the DeCA dialog.
+
+    Allowed at any status except cancelled: they describe the goods, not the plan (the order form can only
+    edit planned orders)."""
+    if not loads:
+        return
+    if order["status"] == "Cancelled":
+        raise ValueError("This order is cancelled.")
+    stops = {row["seq"]: row for row in db.execute("SELECT seq, kind FROM order_stops WHERE order_id=?", (order["id"],))}
+    for load in loads:
+        try:
+            seq = int(load.get("seq"))
+        except (TypeError, ValueError):
+            raise ValueError("Invalid loading stop.") from None
+        if seq not in stops or stops[seq]["kind"] != "Loading":
+            raise ValueError("Invalid loading stop.")
+        material = _row(db, "SELECT * FROM materials WHERE id=?", load["material_id"]) if load.get("material_id") else None
+        if load.get("material_id") and material is None:
+            raise ValueError(f"Stop {seq}: choose a material from the list.")
+        weight = load.get("weight_kg")
+        if weight in (None, ""):
+            weight = None
+        else:
+            try:
+                weight = float(weight)
+            except (TypeError, ValueError):
+                raise ValueError(f"Stop {seq}: weight must be a number of kg.") from None
+            if not 1 <= weight <= 60000:
+                raise ValueError(f"Stop {seq}: weight must be between 1 and 60000 kg.")
+        db.execute("UPDATE order_stops SET material_id=?, material=?, weight_kg=? WHERE order_id=? AND seq=?",
+                   (material["id"] if material else None, material_label(material) if material else "", weight,
+                    order["id"], seq))
+
+
 def prepare(db, data):
     """Save the shipper and observations, assign the identifier once, and return the PDF address."""
     order = _order(db, data.get("order_id"))
@@ -160,6 +196,7 @@ def prepare(db, data):
     if len(notes) > 500:
         raise ValueError("Observaciones: maximum 500 characters.")
     shipper_id = data.get("shipper_id") or order["loading_id"]
+    save_loads(db, order, data.get("loads") or [])
     document(db, order["id"], shipper_id, notes)  # raises with everything that is missing
     deca_id = order["deca_id"] or secrets.token_hex(16)
     created = order["deca_created_at"] or stamp(datetime.now(UTC).replace(second=0, microsecond=0))

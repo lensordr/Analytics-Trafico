@@ -171,3 +171,4 @@
 .next-load-route{margin:3px 0 0;font-size:12px}.next-load-route small{color:var(--muted)}
 .next-load.late{background:#fffaf2;border-color:#f0dfbf}
 .next-load .nearby-km{text-align:right}.next-load .nearby-km small{display:block;font-size:10px;font-weight:500;color:var(--muted)}
+.deca-load{border:1px solid var(--line);border-radius:7px;padding:10px 12px;margin-bottom:12px}.deca-load h4{margin:0 0 8px;font-size:11px;color:#536a4a}
