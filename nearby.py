@@ -11,7 +11,7 @@ from storage import rows
 def nearby_companies(db, data, now=None):
     """Saved companies around a truck's free position, closest first, with load and contact history."""
     origin = item(db, "locations", data.get("location_id"))
-    radius = number(data, "radius_km", 150, 5, 2000)
+    radius = number(data, "radius_km", 0, 0, 5000) or None  # 0 or missing: no distance limit, closest first
     include_all = bool(data.get("include_all"))
     now = (now or datetime.now(UTC)).astimezone(UTC)
     locations = rows(db, "locations")
@@ -32,7 +32,7 @@ def nearby_companies(db, data, now=None):
             if not same_city(origin, loc):
                 missing.append(loc["company"])
                 continue
-        elif distance > radius:
+        elif radius and distance > radius:
             continue
         history = sorted(loads.get(loc["id"], []), key=lambda entry: entry[0], reverse=True)
         destinations = {}

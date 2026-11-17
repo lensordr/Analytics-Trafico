@@ -20,7 +20,7 @@ document.addEventListener('click',async event=>{const nav=event.target.closest('
   if(action==='edit-itv'){openItv(id);return;}
   if(action==='delete-itv'){const v=(state.itv||[]).find(x=>x.id===Number(id));if(!v||!window.confirm(`Remove ${v.plate} from the ITV list?`))return;button.disabled=true;const result=await api('/api/itv-delete',{id:v.id});await refresh();toast(result.message);return;}
   if(action==='confirm-itv-import'){if(!itvImportFile)return;button.disabled=true;const result=await api('/api/itv-import',{file:itvImportFile,confirm:true});itvImportFile=null;$('#modal').close();await refresh();toast(result.message);return;}
-  if(action==='nearby'){nextLoadsSearch='';const b=button.dataset;await openNearby({location_id:Number(id),context:b.context||'',radius_km:150,include_all:false,truck_id:b.truck?Number(b.truck):null,driver_id:b.driver?Number(b.driver):null,from:b.from||null});return;}
+  if(action==='nearby'){nextLoadsSearch='';const b=button.dataset;await openNearby({location_id:Number(id),context:b.context||'',radius_km:0,include_all:false,truck_id:b.truck?Number(b.truck):null,driver_id:b.driver?Number(b.driver):null,from:b.from||null});return;}
   if(action==='nearby-tab'){await openNearby({...nearbyQuery,tab:button.dataset.tab});return;}
   // A load that is not a saved route: a new order for this truck from its free time; new places are added from the order form.
   if(action==='next-load-new'){const q=nearbyQuery||{};$('#modal').close();openOrder({truck_id:q.truck_id||'',driver_id:q.driver_id||'',pickup_at:q.from||undefined});return;}
@@ -83,7 +83,8 @@ document.addEventListener('change',event=>{const input=event.target;
   if(input.id==='upcoming-operation'){upcomingOperation=input.value;render();return;}
   if(input.id==='planning-date'&&input.value){selectedDay=input.value;render();}
   if(input.dataset.filter){filters[input.dataset.filter]=input.value;render();}
-  if(input.name==='truck_id'&&input.closest('#order-form')){const truck=state.trucks.find(t=>t.id===Number(input.value));if(truck){const form=$('#order-form');form.elements.driver_id.value=truck.driver_id||'';setSearchSelectValue(form,'trailer_id',truck.trailer_id);}}
+  if(input.name==='truck_id'&&input.closest('#order-form')){const truck=state.trucks.find(t=>t.id===Number(input.value));if(truck){const form=$('#order-form');form.elements.driver_id.value=truck.driver_id||'';setSearchSelectValue(form,'trailer_id',truck.trailer_id);preloadFromTrailer(form,truck.trailer_id);}}
+  if(input.name==='trailer_id'&&input.closest('#order-form'))preloadFromTrailer(input.closest('#order-form'),input.value);
   if(input.name==='route_mode')syncRouteMode();
   if(input.name==='timing'&&input.closest('#order-form')){if(input.value==='rules')input.form.elements.clock_confirmed.checked=true;syncTiming();}
   if(input.id==='tariff-client'){tariffFilters.client=input.value;refreshTariffList();return;}

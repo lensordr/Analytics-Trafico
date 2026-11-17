@@ -461,6 +461,28 @@ class DispatchTests(unittest.TestCase):
             self.assertIsNone(app.item(db,"trucks",solo)["trailer_id"])
             self.assertEqual(app.item(db,"trailers",swap_trailer)["parked_location_id"],c)
 
+    def test_trailer_left_at_swap_can_go_out_with_another_tractor(self):
+        # Loaded trailer TR-001 is dropped at the base; another tractor takes it to the unloading.
+        with connect(self.database) as db:
+            base = self.add_location(db,"Base",41.65,-0.88)
+            other_driver = app.save_master(db,"drivers",{"name":"Second Driver","carrier":"Test Carrier"})
+            other = app.save_master(db,"trucks",{"plate":"OTHER-2","trailer":"","driver_id":other_driver,"operation":"Local"})
+        with connect(self.database) as db:
+            first = app.create_order(db,self.manual_payload(trailer_id=self.trailer,
+                via=[{"kind":"Trailer swap","location_id":base,"handling_hours":0.5,"arrive_at":"2030-01-07T14:00",
+                      "pick_trailer_id":"","new_pick_trailer":"TR-EMPTY"}]))
+        relay = lambda pickup: self.manual_payload(truck_id=other,driver_id=other_driver,trailer_id=self.trailer,trailer="",
+                                                   loading_id=base,pickup_at=pickup,unloading_arrive_at="2030-01-09T15:00")
+        with connect(self.database) as db:
+            # No time limit from the first order: the dispatcher decides when the other tractor takes it.
+            app.create_order(db,relay("2030-01-07T12:00"))
+        with connect(self.database) as db:
+            # The trailer picked up at the swap stays busy with the first tractor until it is free.
+            with self.assertRaisesRegex(ValueError,"already assigned"):
+                app.create_order(db,{**relay("2030-01-08T09:00"),"trailer_id":app.find_by_plate(db,"trailers","TR-EMPTY")["id"],
+                                     "unloading_arrive_at":"2030-01-08T12:00"})
+            self.assertTrue(first)
+
     def test_delivery_confirmation_frees_truck_from_confirmed_time(self):
         with connect(self.database) as db:
             first = app.create_order(db,self.manual_payload())  # unloading Tue 15:00, planned free 16:00

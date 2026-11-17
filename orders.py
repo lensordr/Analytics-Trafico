@@ -206,22 +206,38 @@ def build_plan(db, data, create=False):
     return truck, driver, trailer, stops, pickup, clock_data, route, plan
 
 
-def picked_trailers(db):
-    """Trailer ids picked up at swap stops, per order."""
-    result = {}
-    for row in db.execute("SELECT order_id, pick_trailer_id FROM order_stops WHERE pick_trailer_id IS NOT NULL"):
-        result.setdefault(row["order_id"], set()).add(row["pick_trailer_id"])
-    return result
+def trailer_spans(db):
+    """The trailers each order keeps busy, per order: [(trailer_id, plate, start, end)].
+    A trailer dropped at a swap is not kept busy by that order at all (no time limit): a loaded trailer left at the
+    base can go out with another tractor whenever the dispatcher plans it. The trailer picked up at the swap is busy
+    from the swap until the order ends."""
+    swaps = {}
+    for row in db.execute("SELECT order_id, seq, planned_at, done_at, drop_trailer_id, drop_trailer, pick_trailer_id, pick_trailer "
+                          "FROM order_stops WHERE kind='Trailer swap' ORDER BY order_id, seq"):
+        swaps.setdefault(row["order_id"], []).append(row)
+    spans = {}
+    for order in db.execute("SELECT id, trailer_id, trailer, pickup_at, available_at FROM orders WHERE status!='Cancelled'"):
+        current, since, result = (order["trailer_id"], order["trailer"] or ""), parse_time(order["pickup_at"]), []
+        # The starting trailer is free of this order once it is dropped at a swap.
+        for swap in swaps.get(order["id"], []):
+            at = parse_time(swap["done_at"] or swap["planned_at"])
+            current, since = (swap["pick_trailer_id"], swap["pick_trailer"] or ""), at
+        result.append((*current, since, parse_time(order["available_at"])))
+        spans[order["id"]] = [span for span in result if span[0] or span[1]]
+    return spans
 
 
 def conflicts(db, truck, driver, trailer, start, end, exclude=0, trailer_id=None, trailer_ids=()):
     found = []
     wanted = {value for value in (trailer_id, *trailer_ids) if value}
-    picks = picked_trailers(db)
+    plate = (trailer or "").casefold()
+    spans = trailer_spans(db)
     for row in db.execute("SELECT * FROM orders WHERE status!='Cancelled' AND id!=?", (exclude,)):
-        used = ({row["trailer_id"]} | picks.get(row["id"], set())) - {None}
-        same = row["truck_id"] == truck or row["driver_id"] == driver or bool(wanted & used) or (trailer and row["trailer"].casefold() == trailer.casefold())
-        if same and start < parse_time(row["available_at"]) and end > parse_time(row["pickup_at"]):
+        overlaps = lambda a, b: start < b and end > a
+        same = (row["truck_id"] == truck or row["driver_id"] == driver) and overlaps(parse_time(row["pickup_at"]), parse_time(row["available_at"]))
+        same = same or any((tid in wanted or (plate and text_plate.casefold() == plate)) and overlaps(a, b)
+                           for tid, text_plate, a, b in spans.get(row["id"], []))
+        if same:
             found.append(row["number"])
     return found
 

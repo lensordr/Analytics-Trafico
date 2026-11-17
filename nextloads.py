@@ -82,7 +82,7 @@ def weekend_deadline(start):
 
 def next_loads(db, data, now=None):
     origin = item(db, "locations", data.get("location_id"))
-    radius = number(data, "radius_km", 150, 5, 2000)
+    radius = number(data, "radius_km", 0, 0, 5000) or None  # 0 or missing: no distance limit, closest first
     load_t = max(number(data, "load_t", MIN_BILLED_KG / 1000, 1, 45), MIN_BILLED_KG / 1000)  # never below the billed minimum
     now = (now or datetime.now(UTC)).astimezone(UTC).replace(second=0, microsecond=0)
     start = max(parse_time(data["from"]), now) if data.get("from") else now
@@ -112,7 +112,7 @@ def next_loads(db, data, now=None):
                 missing.add(tariff["id"])
                 continue
             empty = 0.0
-        if empty > radius * ROAD_FACTOR:
+        if radius and empty > radius * ROAD_FACTOR:
             continue
         loaded = tariff["km"] or road_km(loading, unloading)
         back = road_km(unloading, base) if base else None
