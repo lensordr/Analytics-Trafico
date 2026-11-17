@@ -7,7 +7,7 @@ document.addEventListener('click',async event=>{const nav=event.target.closest('
   if(action.startsWith('go-')){navigate(action.slice(3));return;}
   if(action==='new-material'){openMaterial();return;}
   if(action==='new-tariff'){openTariff();return;}
-  if(action==='clear-tariff-filters'){Object.assign(tariffFilters,{client:'',from:'',to:'',q:'',inactive:false});render();return;}
+  if(action==='clear-tariff-filters'){Object.assign(tariffFilters,{client:'',kind:'',from:'',to:'',q:'',inactive:false});render();return;}
   if(action==='edit-tariff'){openTariff(id);return;}
   if(action==='delete-tariff'){const t=(state.tariffs||[]).find(x=>x.id===Number(id));if(!t||!window.confirm(`Delete this tariff of ${companyName(t.client_id)}? Orders that used it keep their price.`))return;button.disabled=true;const result=await api('/api/tariff-delete',{id:t.id});await refresh();toast(result.message);return;}
   if(action==='use-tariff'){const t=(state.tariffs||[]).find(x=>x.id===Number(id));if(t)applyTariff(form,t);return;}
@@ -83,6 +83,7 @@ document.addEventListener('change',event=>{const input=event.target;
   if(input.name==='route_mode')syncRouteMode();
   if(input.name==='timing'&&input.closest('#order-form'))syncTiming();
   if(input.id==='tariff-client'){tariffFilters.client=input.value;refreshTariffList();return;}
+  if(input.id==='tariff-kind'){tariffFilters.kind=input.value;refreshTariffList();return;}
   if(input.id==='tariff-inactive'){tariffFilters.inactive=input.checked;refreshTariffList();return;}
   if(input.name==='loading_id'&&input.closest('#order-form'))refreshUnloadingPicker(input.closest('#order-form'));
   if(['loading_id','unloading_id','client_id'].includes(input.name)&&input.closest('#order-form'))syncTariffBox(input.closest('#order-form'));

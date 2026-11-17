@@ -29,7 +29,7 @@ function opportunities(){const endDay=addDays(selectedDay,period-1),list=[];cons
     const ready=order.available_at;
     const next=orders.filter(o=>o.id!==order.id&&(o.truck_id===order.truck_id||o.driver_id===order.driver_id||(order.trailer&&o.trailer.toLowerCase()===order.trailer.toLowerCase()))&&new Date(o.pickup_at)>=new Date(ready)).sort((a,b)=>new Date(a.pickup_at)-new Date(b.pickup_at))[0];
     const from = new Date(ready)>new Date(state.now)?ready:state.now;
-    if(next&&new Date(next.pickup_at)-new Date(from)<2*3600000)continue;
+    if(next)continue; // the next loading is already planned: nothing left to recommend for this unloading
     if(dayOf(from)>endDay|| (next&&dayOf(next.pickup_at)<selectedDay))continue;
     if(filters.plate&&!order.plate.toLowerCase().includes(filters.plate.toLowerCase()))continue;
     if(filters.operation&&order.operation!==filters.operation)continue;

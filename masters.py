@@ -79,6 +79,8 @@ def save_master(db, kind, data):
         for key, limit in (("kind", 40), ("contact_name", 200), ("phone", 60), ("email", 200), ("notes", 2000), ("nif", 30)):
             values[key] = text(data, key, False, limit) if key in data else saved.get(key, "")
         values["nif"] = values["nif"].upper().replace(" ", "")
+        values["transport_company"] = (1 if data.get("transport_company") else 0) if "transport_company" in data \
+            else saved.get("transport_company", 0)
         values["kind"] = values["kind"] or "Client"
         if values["kind"] not in LOCATION_KINDS:
             raise ValueError("Choose a company type from the list.")

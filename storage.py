@@ -285,6 +285,9 @@ def backup_to(target, destination):
         source.close()
 
 
+TRANSPORT_NAME = re.compile(r"transport|trans\s|logist|camion|trucking|cargo|grupaje|operador", re.I)
+
+
 def initialize(target):
     if not isinstance(target, TursoReplica):
         Path(target).parent.mkdir(parents=True, exist_ok=True)
@@ -431,6 +434,13 @@ def initialize(target):
             notes TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, source_id TEXT)""")
         db.execute("CREATE INDEX IF NOT EXISTS tariffs_route ON tariffs(from_id, to_id)")
         db.execute("CREATE UNIQUE INDEX IF NOT EXISTS tariffs_source ON tariffs(source_id)")
+        columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(locations)")}
+        if "transport_company" not in columns:
+            # Clients that are transport companies giving loads (they pay less): ranked after direct clients.
+            db.execute("ALTER TABLE locations ADD COLUMN transport_company INTEGER NOT NULL DEFAULT 0")
+            for row in db.execute("SELECT DISTINCT l.id, l.company FROM locations l JOIN tariffs t ON t.client_id=l.id").fetchall():
+                if TRANSPORT_NAME.search(row["company"] or ""):
+                    db.execute("UPDATE locations SET transport_company=1 WHERE id=?", (row["id"],))
         # Who pays for the order and its price (a copy of the tariff's basis and rate, or a manual total).
         columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(orders)")}
         for column, kind in (("client_id", "INTEGER REFERENCES locations(id)"), ("tariff_id", "INTEGER REFERENCES tariffs(id)"),

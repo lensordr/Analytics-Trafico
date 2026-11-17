@@ -138,14 +138,17 @@ def next_loads(db, data, now=None):
                 clock.drive(back)
                 home_at = clock.t
         done, last = history.get((loading["id"], unloading["id"]), (0, ""))
+        client = locations.get(tariff["client_id"]) or {}
         results.append({"tariff": tariff, "empty_km": empty, "loaded_km": loaded, "loaded_km_estimated": not tariff["km"],
                         "back_km": back, "revenue": revenue, "per_km": per_km, "per_hour": per_hour,
                         "load_at": stamp(load_at) if load_at else None, "unload_at": stamp(unload_at) if unload_at else None, "home_at": stamp(home_at) if home_at else None,
                         "home_for_weekend": None if home_at is None or away else home_at <= deadline,
+                        "transport_client": bool(client.get("transport_company")),
                         "orders": done, "last_order_at": last or None})
-    # Thursday on (when the driver goes home at weekends): routes that get the driver home come first; then by € per hour.
+    # Thursday on (when the driver goes home at weekends): routes that get the driver home come first.
+    # Then direct clients before transport companies (they pay less), then by € per hour.
     towards_home = not away and start.astimezone(ZONE).weekday() >= 3
-    results.sort(key=lambda r: ((r["home_for_weekend"] is False) if towards_home else False,
+    results.sort(key=lambda r: ((r["home_for_weekend"] is False) if towards_home else False, r["transport_client"],
                                 -(r["per_hour"] or -1), r["empty_km"]))
     return {"origin": origin, "base": base, "radius_km": radius, "load_t": load_t, "from": stamp(start),
             "weekend_deadline": stamp(deadline), "weekend_away": away, "towards_home": towards_home,

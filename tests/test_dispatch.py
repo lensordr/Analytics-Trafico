@@ -287,6 +287,19 @@ class DispatchTests(unittest.TestCase):
             deca.save_settings(db, {"home_base_id": str(toledo)})
             self.assertEqual(app.next_loads(db, {"location_id": self.a, "weekend_away": False})["base"]["id"], toledo)
 
+    def test_transport_company_clients_come_after_direct_clients(self):
+        with connect(self.database) as db:
+            spot = {"city": "Getafe", "postal_code": "28901", "country": "Spain", "lat": 40.30, "lon": -3.73}
+            haulier = app.save_master(db, "locations", {"company": "Transportes Rapidos", **spot, "transport_company": True})
+            direct = app.save_master(db, "locations", {"company": "Steel Works", **spot})
+            better = app.save_tariff(db, {"client_id": haulier, "from_id": direct, "to_id": self.b, "basis": "trip", "rate": 3000, "km": 1270})
+            worse = app.save_tariff(db, {"client_id": direct, "from_id": direct, "to_id": self.b, "basis": "trip", "rate": 1500, "km": 1270})
+            result = app.next_loads(db, {"location_id": self.a, "radius_km": 100, "from": "2030-01-07T08:00"}, now=parse_time("2030-01-01T10:00"))
+            self.assertEqual([r["tariff"]["id"] for r in result["routes"]], [worse, better])  # direct client first, even if paid less
+            self.assertEqual([r["transport_client"] for r in result["routes"]], [False, True])
+            app.save_master(db, "locations", {"id": haulier, "company": "Transportes Rapidos", **spot})  # older form: flag kept
+            self.assertEqual(app.item(db, "locations", haulier)["transport_company"], 1)
+
     def test_location_profile_validation_and_kept_on_partial_edit(self):
         with connect(self.database) as db:
             with self.assertRaisesRegex(ValueError,"company type"):
