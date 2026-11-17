@@ -15,7 +15,7 @@ function locationPicker(label,name,value,settings={},first=[]){return searchSele
 function routeDestinations(from){const by=new Map();for(const t of state.tariffs||[])if(t.active&&t.from_id===Number(from))(by.get(t.to_id)||by.set(t.to_id,[]).get(t.to_id)).push(t);
   return [...by].map(([id,list])=>({id,hint:'Saved route · '+(list.length===1?`${companyName(list[0].client_id)} · ${rateText(list[0].basis,list[0].rate)}`:`${list.length} tariffs`)}));}
 function refreshUnloadingPicker(form){const wrapper=form.querySelector('[data-search-select="unloading_id"]');if(!wrapper)return;const routes=routeDestinations(form.elements.loading_id.value);
-  wrapper.closest('.field').outerHTML=locationPicker(`Unloading point · city & company${routes.length?` · ★ ${routes.length} saved ${routes.length===1?'route':'routes'} from this loading`:''}`,'unloading_id',form.elements.unloading_id.value,{required:true},routes);}
+  wrapper.closest('.field').outerHTML=locationPicker(`Unloading point · city & company${routes.length?` · ★ ${routes.length} saved ${routes.length===1?'route':'routes'} from this loading`:''}`,'unloading_id',form.elements.unloading_id.value,{required:true,newLabel:'location'},routes);}
 const companyName=id=>getLocation(id)?.company||'Unknown';
 
 // ---------------------------------------------------------------- Price of an order (same rules as tariffs.order_amount)
@@ -56,7 +56,7 @@ function openTariff(id=null,draft={}){const t=(state.tariffs||[]).find(x=>x.id==
 // ---------------------------------------------------------------- Order form: client & price
 const routeTariffs=(from,to,client)=>(state.tariffs||[]).filter(t=>t.active&&t.from_id===Number(from)&&t.to_id===Number(to)&&(!client||t.client_id===Number(client))).sort((a,b)=>String(b.price_date).localeCompare(String(a.price_date)));
 function priceSection(draft){return `<div class="span-2 section-title">Client & price</div><div class="span-2" id="tariff-box"></div><input type="hidden" name="tariff_id" value="${esc(draft.tariff_id||'')}">
-  <div class="span-2">${locationPicker('Client · who pays (optional)','client_id',draft.client_id,{empty:'Not set',placeholder:'Search client…'})}</div>
+  <div class="span-2">${`<div class="inline-actions picker-with-button">${locationPicker('Client · who pays (optional)','client_id',draft.client_id,{empty:'Not set',placeholder:'Search client…',newLabel:'client'})}<button type="button" class="btn small" data-action="quick-location" data-slot="client_id">＋ New</button></div>`}</div>
   ${selectField('Price calculated','rate_basis',`<option value="">No price</option>`+tariffBases.map(([v,l])=>`<option value="${v}" ${draft.rate_basis===v?'selected':''}>${esc(l)}</option>`).join(''))}${field('Price (€)','rate',draft.rate??'','number','min="0" max="100000" step="0.01"','Filled in from the tariff. You can change it for this order.')}
   <label class="checkbox span-2" id="save-tariff-row" hidden><input type="checkbox" name="save_tariff"><span>New route: save it with this price as a tariff for the client, so it is suggested next time</span></label>
   ${field('Agreed total (€, optional)','price_eur',draft.price_eur??'','number','min="0" max="1000000" step="0.01"','Only if the total is fixed by hand (for example hours). Replaces the calculation.')}<div class="field"><label>Price of this order</label><div id="price-preview" class="price-total">—</div></div>`;}

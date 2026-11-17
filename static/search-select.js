@@ -26,6 +26,8 @@ function trailerPicker(label,id,plate='') {
   return searchSelectField(label,'trailer_id',entries,selected,{snapshotName:'trailer',empty:'No trailer assigned',newLabel:'trailer',newField:'new_trailer',placeholder:'Search or type a new registration…'});
 }
 
+// Registrations are saved in capitals; names (locations, clients) as typed.
+const searchNewText=(wrapper,typed)=>['location','client'].includes(wrapper.dataset.newLabel)?typed:typed.toUpperCase();
 const searchHidden=wrapper=>wrapper.querySelector('[data-search-hidden]');
 function searchSelectOpen(wrapper,open=true) {
   wrapper.querySelector('.search-select-menu').hidden=!open;
@@ -48,7 +50,7 @@ function searchSelectFilter(wrapper,query) {
   if(add){
     add.hidden=!typed||exact;
     add.classList.remove('search-highlight');
-    add.innerHTML=`<strong>＋ Add new ${esc(wrapper.dataset.newLabel)} “${esc(typed.toUpperCase())}”</strong><small>${wrapper.querySelector('[data-search-newvalue]')?'Created when you save':'Opens the form to add it'}</small>`;
+    add.innerHTML=`<strong>＋ Add new ${esc(wrapper.dataset.newLabel)} “${esc(searchNewText(wrapper,typed))}”</strong><small>${wrapper.querySelector('[data-search-newvalue]')?'Created when you save':'Opens the form to add it'}</small>`;
     if(!add.hidden)visible++;
   }
   wrapper.querySelector('.search-no-results').hidden=visible>0;
@@ -59,7 +61,7 @@ function searchSelectChoose(wrapper,option,dispatch=true) {
   const snapshot=wrapper.querySelector('[data-search-snapshot]');
   const newValue=wrapper.querySelector('[data-search-newvalue]');
   if(option&&option.dataset.searchNew!==undefined){
-    const typed=input.value.trim().toUpperCase();
+    const typed=searchNewText(wrapper,input.value.trim());
     searchSelectOpen(wrapper,false);
     if(!newValue){wrapper.dispatchEvent(new CustomEvent('search-select-new',{bubbles:true,detail:{name:hidden.name,value:typed}}));return;}
     hidden.value='';newValue.value=typed;input.value=typed;input.setCustomValidity('');
