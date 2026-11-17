@@ -201,7 +201,12 @@ carrier's cost was not imported.
 When the `PORT` environment variable is set (Render sets it), the app listens on
 all interfaces and requires a dispatcher password. Environment variables:
 
-- `APP_PASSWORD` — dispatcher password, at least 10 characters (required online)
+- `APP_USERS` — dispatcher users, `name:password` pairs separated by `;`
+  (e.g. `malcom1:…;malcom2:…`), every password at least 10 characters. Each
+  dispatcher signs in with their own name, from any computer, at the same time.
+  Removing a name signs that user out.
+- `APP_PASSWORD` — one shared password instead of users, at least 10 characters
+  (one of the two is required online)
 - `SESSION_SECRET` — long random text; keeps you signed in across restarts
 - `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` — the database
 - `RENDER_EXTERNAL_HOSTNAME` is set by Render; other domains go in `PUBLIC_HOST`

@@ -14,7 +14,7 @@ import routing  # noqa: F401  (tests patch app.routing)
 import time  # noqa: F401  (tests patch app.time)
 from http.server import ThreadingHTTPServer  # noqa: F401
 import deca
-from auth import Auth
+from auth import MIN_PASSWORD, Auth, parse_users
 from planner import UTC, ZONE, parse_time  # noqa: F401
 from storage import TursoReplica, connect, initialize
 from common import *  # noqa: F401,F403
@@ -46,8 +46,15 @@ def main():
     # Online (Render sets PORT): listen on all interfaces, only with a dispatcher password.
     online = bool(os.environ.get("PORT"))
     password = os.environ.get("APP_PASSWORD","").strip() or None
-    if online and (not password or len(password) < 10):
-        print("APP_PASSWORD (at least 10 characters) is required when the app runs online.",flush=True)
+    try:
+        users = parse_users(os.environ.get("APP_USERS",""))
+    except ValueError as error:
+        print(error,flush=True)
+        sys.exit(1)
+    # Online: each dispatcher's password (APP_USERS) or the shared one (APP_PASSWORD), at least 10 characters.
+    passwords = list(users.values()) or ([password] if password else [])
+    if online and (not passwords or any(len(p) < MIN_PASSWORD for p in passwords)):
+        print(f"APP_USERS (name:password;...) or APP_PASSWORD is required online, every password at least {MIN_PASSWORD} characters.",flush=True)
         sys.exit(1)
     port = int(os.environ.get("PORT") or args.port)
     try:
@@ -58,7 +65,7 @@ def main():
         sys.exit(1)
     with server:
         server.database = database
-        server.auth = Auth(password, os.environ.get("SESSION_SECRET","").strip() or None)
+        server.auth = Auth(password, os.environ.get("SESSION_SECRET","").strip() or None, users)
         server.public_hosts = {host.strip() for host in (os.environ.get("PUBLIC_HOST",""), os.environ.get("RENDER_EXTERNAL_HOSTNAME","")) if host.strip()}
         # Online: remember the public address, so driver links work from any copy of the app.
         public = os.environ.get("PUBLIC_HOST","").strip() or os.environ.get("RENDER_EXTERNAL_HOSTNAME","").strip()

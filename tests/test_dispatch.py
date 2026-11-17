@@ -1061,6 +1061,53 @@ class DispatchTests(unittest.TestCase):
             server.server_close()
             thread.join()
 
+    def test_dispatcher_users_sign_in_with_their_own_name(self):
+        from auth import Auth, parse_users
+        import http.client
+        users = parse_users(" Malcom1:first secret pw ; malcom2:second: secret ")
+        self.assertEqual(users, {"malcom1": "first secret pw ", "malcom2": "second: secret "})
+        for bad in ("nopassword", "bad name:secret", ":secret"):
+            with self.assertRaisesRegex(ValueError, "APP_USERS"):
+                parse_users(bad)
+        users = {"malcom1": "first-secret-1", "malcom2": "second-secret-2"}
+        server = app.ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)
+        server.database = self.database
+        server.auth = Auth(None, "fixed-secret", users)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        port = server.server_port
+        def call(method, path, body=None, headers=None):
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+            connection.request(method, path, body=body, headers={"Host": f"127.0.0.1:{port}", **(headers or {})})
+            response = connection.getresponse()
+            data = response.read()
+            connection.close()
+            return response.status, dict(response.getheaders()), data
+        form = {"Content-Type": "application/x-www-form-urlencoded"}
+        try:
+            self.assertIn(b'name="user"', call("GET", "/login")[2])
+            with patch.object(app.time, "sleep"):
+                # Another user's password does not work, nor does a missing name.
+                self.assertEqual(call("POST", "/login", b"user=malcom1&password=second-secret-2", form)[0], 401)
+                self.assertEqual(call("POST", "/login", b"password=first-secret-1", form)[0], 401)
+                sessions = {}
+                for name, password in users.items():
+                    _, headers, _ = call("POST", "/login", f"user={name.upper()}&password={password}".encode(), form)
+                    sessions[name] = {"Cookie": headers["Set-Cookie"].split(";")[0]}
+            # Both are signed in at the same time, each as themselves.
+            for name, session in sessions.items():
+                status, _, body = call("GET", "/api/state", headers=session)
+                self.assertEqual((status, json.loads(body)["user"]), (200, name))
+            # A user removed from APP_USERS is signed out; a shared-password cookie is not accepted.
+            server.auth.users.pop("malcom2")
+            self.assertEqual(call("GET", "/api/state", headers=sessions["malcom2"])[0], 401)
+            shared = Auth("shared-password", "fixed-secret").new_cookie(False).split(";")[0]
+            self.assertEqual(call("GET", "/api/state", headers={"Cookie": shared})[0], 401)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
 
 if __name__=="__main__":
     unittest.main()

@@ -96,7 +96,13 @@ class Handler(BaseHTTPRequestHandler):
     def login_page(self,message="",status=200):
         page = (ROOT/"static"/"login.html").read_text(encoding="utf-8")
         note = f'<div class="notice warning">{message}</div>' if message else ""
-        self.send_body(status,page.replace("<!--MESSAGE-->",note),"text/html; charset=utf-8")
+        # With dispatcher users (APP_USERS) each one signs in with their name.
+        name = ('<div class="field"><label for="user">User</label><input id="user" name="user" autocomplete="username" '
+                'autocapitalize="none" required autofocus></div>') if self.auth.named else ""
+        if self.auth.named:  # the cursor starts in the user field
+            page = page.replace('type="password" autocomplete="current-password" required autofocus>','type="password" autocomplete="current-password" required>')
+        page = page.replace("<!--MESSAGE-->",note).replace("<!--USER-->",name)
+        self.send_body(status,page,"text/html; charset=utf-8")
 
     def handle_login(self):
         address = self.client_address_text()
@@ -105,11 +111,12 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length","0") or 0)
         if not 0 < length < 2000:
             return self.login_page("Enter the password.",400)
-        password = dict(parse_qsl(self.rfile.read(length).decode("utf-8","replace"))).get("password","")
-        if self.auth.check(address,password):
-            return self.redirect("/",self.auth.new_cookie(self.https()))
+        form = dict(parse_qsl(self.rfile.read(length).decode("utf-8","replace")))
+        user = self.auth.check(address,form.get("password",""),form.get("user",""))
+        if user is not None:
+            return self.redirect("/",self.auth.new_cookie(self.https(),user))
         time.sleep(1)
-        return self.login_page("Wrong password.",401)
+        return self.login_page("Wrong user or password." if self.auth.named else "Wrong password.",401)
 
     # ---- driver page: the secret link is the only key; one order, next stop only
     def driver_get(self,token,message="",error="",lang=None):
@@ -213,7 +220,7 @@ class Handler(BaseHTTPRequestHandler):
             newest = autobackup.latest(folder) if folder else None
             state["auto_backup"] = {"enabled": bool(folder), "latest": stamp(datetime.fromtimestamp(newest.stat().st_mtime,UTC)) if newest else None,
                                     "count": len(autobackup.files(folder)) if folder else 0}
-            state.update(token=TOKEN,auth=self.auth.enabled,here_configured=routing.configured(),now=stamp(datetime.now(UTC)),timezone="Europe/Madrid",
+            state.update(token=TOKEN,auth=self.auth.enabled,user=self.auth.user(self.headers.get("Cookie")) or "",here_configured=routing.configured(),now=stamp(datetime.now(UTC)),timezone="Europe/Madrid",
                          storage="turso" if isinstance(self.server.database,TursoReplica) else "sqlite")
             return self.send_body(200,state)
         if path == "/api/deca.pdf":
