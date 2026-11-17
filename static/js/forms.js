@@ -1,6 +1,6 @@
 'use strict';
 // Dialog, form errors and the directory forms.
-function showModal(title,content,kicker='DISPATCH WORKSPACE'){const modal=$('#modal');$('#modal-title').textContent=title;$('#modal-kicker').textContent=kicker;$('#modal-content').innerHTML=content;if(!modal.open)modal.showModal();modal.scrollTop=0;}
+function showModal(title,content,kicker='DISPATCH WORKSPACE'){const modal=$('#modal');$('#modal-title').textContent=title;$('#modal-kicker').textContent=kicker;$('#modal-content').innerHTML=content;modal._dirty=false;if(!modal.open)modal.showModal();modal.scrollTop=0;}
 function showError(form,error){const el=$('.form-error',form);if(el){el.textContent=error.message;el.scrollIntoView({block:'nearest'});}else toast(error.message,true);}
 function formObject(form){const obj=Object.fromEntries(new FormData(form));for(const input of form.querySelectorAll('input[type=checkbox]'))obj[input.name]=input.checked;return obj;}
 // "37.4739, -4.4749", "37.4739 -4.4749" or a Google Maps link (…/@37.4739,-4.4749,15z or …!3d37.4739!4d-4.4749).

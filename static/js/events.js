@@ -85,7 +85,7 @@ document.addEventListener('change',event=>{const input=event.target;
   if(input.dataset.filter){filters[input.dataset.filter]=input.value;render();}
   if(input.name==='truck_id'&&input.closest('#order-form')){const truck=state.trucks.find(t=>t.id===Number(input.value));if(truck){const form=$('#order-form');form.elements.driver_id.value=truck.driver_id||'';setSearchSelectValue(form,'trailer_id',truck.trailer_id);}}
   if(input.name==='route_mode')syncRouteMode();
-  if(input.name==='timing'&&input.closest('#order-form'))syncTiming();
+  if(input.name==='timing'&&input.closest('#order-form')){if(input.value==='rules')input.form.elements.clock_confirmed.checked=true;syncTiming();}
   if(input.id==='tariff-client'){tariffFilters.client=input.value;refreshTariffList();return;}
   if(input.id==='tariff-kind'){tariffFilters.kind=input.value;refreshTariffList();return;}
   if(input.id==='tariff-inactive'){tariffFilters.inactive=input.checked;refreshTariffList();return;}
@@ -106,6 +106,13 @@ document.addEventListener('search-select-new',event=>{const form=event.target.cl
 suggestSources.plates=()=>[...state.trucks.map(t=>t.plate),...state.orders.map(o=>o.plate)];
 suggestSources.places=()=>state.locations.flatMap(p=>[p.city,p.company,p.postal_code,placeLabel(p)]);
 $('#close-modal').addEventListener('click',()=>$('#modal').close());
+// A click outside the window (on the dark background) closes it, unless something was typed in a form there:
+// a half-filled order is never lost by a stray click. A drag that starts inside (selecting text) does not close it.
+{const modal=$('#modal');let downOutside=false;
+  const outside=event=>{if(event.target!==modal)return false;const r=modal.getBoundingClientRect();return event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom;};
+  modal.addEventListener('mousedown',event=>{downOutside=outside(event);});
+  modal.addEventListener('input',()=>{modal._dirty=true;});
+  modal.addEventListener('click',event=>{if(downOutside&&outside(event)&&!modal._dirty)modal.close();downOutside=false;});}
 // Every minute: fetch the latest data so delivery alerts appear on time (not while a form is open or a field is in use).
 setInterval(async()=>{if(!state||document.hidden)return;if($('#modal').open||document.activeElement?.matches?.('input,select,textarea')){updateAlertCount();return;}
   try{if(!await loadState()){updateAlertCount();return;}$('#nav-count').textContent=state.orders.filter(x=>x.status==='Planned'||x.status==='In transit').length;if(view==='board'||view==='planner')render();else{updateAlertCount();updateItvCount();}}catch(error){}},60000);
