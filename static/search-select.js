@@ -8,15 +8,25 @@
      hiddenId, hiddenAttrs  — id / extra attributes for the hidden value input (filters)
      newLabel               — enables "+ Add new <newLabel> “typed text”"
      newField               — name of a hidden input that receives the typed text (created on save);
-                              without it, choosing "Add new" fires a `search-select-new` event. */
+                              without it, choosing "Add new" fires a `search-select-new` event.
+   Long lists (1000+ locations) are kept in memory: only the first SEARCH_SHOWN matches are drawn,
+   so forms with several pickers stay light. */
 const searchNorm=text=>String(text||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+const SEARCH_SHOWN=60;
+const searchLists=new Map();let searchListSeq=0;
+function searchOptionHtml(name,entry,index,value){
+  return `<button type="button" role="option" id="search-${name}-${index}" class="search-select-option" data-search-id="${esc(entry.id)}" data-search-label="${esc(entry.label)}" data-search-value="${esc(entry.value??entry.label)}" aria-selected="${String(entry.id)===String(value)}"><strong>${esc(entry.label)}</strong>${entry.hint?`<small>${esc(entry.hint)}</small>`:''}</button>`;
+}
 function searchSelectField(label,name,entries,value,settings={}) {
   const selected=entries.find(entry=>String(entry.id)===String(value));
   const empty=settings.empty||'Unassigned';
-  const option=(entry,index)=>`<button type="button" role="option" id="search-${name}-${index}" class="search-select-option" data-search-id="${esc(entry.id)}" data-search-label="${esc(entry.label)}" data-search-value="${esc(entry.value??entry.label)}" data-search-terms="${esc(searchNorm(entry.label+' '+(entry.hint||'')))}" aria-selected="${String(entry.id)===String(value)}"><strong>${esc(entry.label)}</strong>${entry.hint?`<small>${esc(entry.hint)}</small>`:''}</button>`;
-  const newOption=settings.newLabel?`<button type="button" role="option" id="search-${name}-new" class="search-select-option search-select-new" data-search-new data-search-terms="" hidden></button>`:'';
+  // Forget lists of pickers that left the page (older than a minute: new forms are still being built).
+  if(searchLists.size>40){const old=Date.now()-60000;for(const [key,list] of searchLists)if(list.at<old&&!document.querySelector(`[data-search-list="${key}"]`))searchLists.delete(key);}
+  const key=String(++searchListSeq);
+  searchLists.set(key,{name,at:Date.now(),entries:entries.map(entry=>({...entry,terms:searchNorm(entry.label+' '+(entry.hint||'')),lower:String(entry.label).toLowerCase(),valueLower:String(entry.value??entry.label).toLowerCase()}))});
+  const newOption=settings.newLabel?`<button type="button" role="option" id="search-${name}-new" class="search-select-option search-select-new" data-search-new hidden></button>`:'';
   const noResults=settings.noResults?esc(settings.noResults):settings.newLabel?`No match. Keep typing to add a new ${esc(settings.newLabel)}.`:'No matching registration. Add it to the directory first.';
-  return `<div class="field"><label for="f-${name}">${esc(label)}</label><div class="search-select" data-search-select="${name}" ${settings.newLabel?`data-new-label="${esc(settings.newLabel)}"`:''}><input id="f-${name}" class="search-select-input" type="text" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="search-options-${name}" autocomplete="off" placeholder="${esc(settings.placeholder||'Search registrations…')}" value="${esc(selected?.label||'')}" ${settings.required?'required':''}><input type="hidden" data-search-hidden name="${name}"${settings.hiddenId?` id="${settings.hiddenId}"`:''}${settings.hiddenAttrs?' '+settings.hiddenAttrs:''} value="${esc(selected?.id||'')}">${settings.snapshotName?`<input type="hidden" name="${settings.snapshotName}" data-search-snapshot value="${esc(selected?.value??selected?.label??'')}">`:''}${settings.newField?`<input type="hidden" name="${settings.newField}" data-search-newvalue value="">`:''}<button type="button" class="search-select-toggle" aria-label="Show ${esc(label.toLowerCase())} options">⌄</button><div class="search-select-menu" role="listbox" id="search-options-${name}" hidden>${option({id:'',label:empty,value:''},0)}${entries.map((entry,index)=>option(entry,index+1)).join('')}${newOption}<p class="search-no-results" hidden>${noResults}</p></div></div></div>`;
+  return `<div class="field"><label for="f-${name}">${esc(label)}</label><div class="search-select" data-search-select="${name}" data-search-list="${key}" ${settings.newLabel?`data-new-label="${esc(settings.newLabel)}"`:''}><input id="f-${name}" class="search-select-input" type="text" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="search-options-${name}" autocomplete="off" placeholder="${esc(settings.placeholder||'Search registrations…')}" value="${esc(selected?.label||'')}" ${settings.required?'required':''}><input type="hidden" data-search-hidden name="${name}"${settings.hiddenId?` id="${settings.hiddenId}"`:''}${settings.hiddenAttrs?' '+settings.hiddenAttrs:''} value="${esc(selected?.id||'')}">${settings.snapshotName?`<input type="hidden" name="${settings.snapshotName}" data-search-snapshot value="${esc(selected?.value??selected?.label??'')}">`:''}${settings.newField?`<input type="hidden" name="${settings.newField}" data-search-newvalue value="">`:''}<button type="button" class="search-select-toggle" aria-label="Show ${esc(label.toLowerCase())} options">⌄</button><div class="search-select-menu" role="listbox" id="search-options-${name}" hidden>${searchOptionHtml(name,{id:'',label:empty,value:''},0,value)}<div class="search-select-rows"></div>${newOption}<p class="search-more" hidden></p><p class="search-no-results" hidden>${noResults}</p></div></div></div>`;
 }
 
 function trailerPicker(label,id,plate='') {
@@ -29,6 +39,15 @@ function trailerPicker(label,id,plate='') {
 // Registrations are saved in capitals; names (locations, clients) as typed.
 const searchNewText=(wrapper,typed)=>['location','client'].includes(wrapper.dataset.newLabel)?typed:typed.toUpperCase();
 const searchHidden=wrapper=>wrapper.querySelector('[data-search-hidden]');
+const searchList=wrapper=>searchLists.get(wrapper.dataset.searchList)||{name:'',entries:[]};
+// The option element for an entry, drawing it when it is not on the page yet.
+function searchOptionFor(wrapper,entry){
+  const rows=wrapper.querySelector('.search-select-rows');
+  const drawn=Array.from(rows.children).find(row=>row.dataset.searchId===String(entry.id));
+  if(drawn)return drawn;
+  rows.insertAdjacentHTML('beforeend',searchOptionHtml(searchList(wrapper).name,entry,'x'+entry.id,searchHidden(wrapper).value));
+  return rows.lastElementChild;
+}
 function searchSelectOpen(wrapper,open=true) {
   wrapper.querySelector('.search-select-menu').hidden=!open;
   wrapper.querySelector('.search-select-input').setAttribute('aria-expanded',String(open));
@@ -39,13 +58,16 @@ function searchSelectFilter(wrapper,query) {
   query=typed.toLowerCase();
   // Every typed word must appear, in any order, accents ignored ("granollers ferimet").
   const words=searchNorm(typed).split(' ').filter(Boolean);
-  let visible=0,exact=false;
-  for(const option of wrapper.querySelectorAll('.search-select-option:not([data-search-new])')) {
-    option.hidden=words.length>0&&!words.every(word=>option.dataset.searchTerms.includes(word));
-    option.classList.remove('search-highlight');
-    if(!option.hidden)visible++;
-    if(option.dataset.searchId&&option.dataset.searchLabel.toLowerCase()===query)exact=true;
-  }
+  const list=searchList(wrapper),current=searchHidden(wrapper).value;
+  const matches=words.length?list.entries.filter(entry=>words.every(word=>entry.terms.includes(word))):list.entries;
+  const exact=!!query&&list.entries.some(entry=>entry.lower===query);
+  const empty=wrapper.querySelector('.search-select-menu > .search-select-option');
+  empty.hidden=words.length>0;empty.classList.remove('search-highlight');
+  wrapper.querySelector('.search-select-rows').innerHTML=matches.slice(0,SEARCH_SHOWN).map((entry,index)=>searchOptionHtml(list.name,entry,index+1,current)).join('');
+  const more=wrapper.querySelector('.search-more');
+  more.hidden=matches.length<=SEARCH_SHOWN;
+  more.textContent=`Showing ${SEARCH_SHOWN} of ${matches.length} · type to narrow`;
+  let visible=Math.min(matches.length,SEARCH_SHOWN)+(empty.hidden?0:1);
   const add=wrapper.querySelector('[data-search-new]');
   if(add){
     add.hidden=!typed||exact;
@@ -82,8 +104,8 @@ function searchSelectChoose(wrapper,option,dispatch=true) {
 function setSearchSelectValue(root,name,value) {
   const wrapper=root.querySelector(`[data-search-select="${name}"]`);
   if(!wrapper)return;
-  const option=Array.from(wrapper.querySelectorAll('.search-select-option')).find(row=>row.dataset.searchId===String(value||''));
-  searchSelectChoose(wrapper,option,false);
+  const entry=searchList(wrapper).entries.find(row=>String(row.id)===String(value||''));
+  searchSelectChoose(wrapper,entry?searchOptionFor(wrapper,entry):null,false);
 }
 function validateSearchSelections(root) {
   for(const input of root.querySelectorAll('.search-select-input'))if(!input.reportValidity())return false;
@@ -113,8 +135,8 @@ document.addEventListener('input',event=>{
 document.addEventListener('change',event=>{
   if(!event.target.matches('.search-select-input'))return;
   const input=event.target,wrapper=input.closest('[data-search-select]'),query=input.value.trim().toLowerCase();
-  const exact=Array.from(wrapper.querySelectorAll('.search-select-option')).find(option=>option.dataset.searchId&&(option.dataset.searchLabel.toLowerCase()===query||option.dataset.searchValue.toLowerCase()===query));
-  if(exact)searchSelectChoose(wrapper,exact);
+  const exact=searchList(wrapper).entries.find(entry=>entry.id!==''&&(entry.lower===query||entry.valueLower===query));
+  if(exact)searchSelectChoose(wrapper,searchOptionFor(wrapper,exact));
   else if(!query)searchSelectChoose(wrapper,null);
 });
 document.addEventListener('keydown',event=>{
@@ -137,6 +159,7 @@ document.addEventListener('keydown',event=>{
 document.addEventListener('focusin',event=>{
   for(const wrapper of document.querySelectorAll('[data-search-select]'))if(!wrapper.contains(event.target))searchSelectOpen(wrapper,false);
 });
+
 
 /* Free-text inputs with suggestions: <input data-suggest="plates">.
    Typing still filters by plain text; the list only recommends values.

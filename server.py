@@ -1,5 +1,7 @@
 """HTTP server: routing, login, driver page, JSON API and static files."""
 
+import gzip
+import hashlib
 import json
 import os
 import re
@@ -33,6 +35,7 @@ from upcoming import weekly_availability
 
 ROOT = Path(__file__).resolve().parent
 TOKEN = secrets.token_urlsafe(32)
+COMPRESSIBLE = {"application/json", "text/html", "text/javascript", "text/css"}
 
 class Handler(BaseHTTPRequestHandler):
     def version_string(self):
@@ -45,12 +48,22 @@ class Handler(BaseHTTPRequestHandler):
             message = re.sub(r"/([sd])/[^ ?\"]+", r"/\1/…", message)
         sys.stderr.write(f"{self.address_string()} - - [{self.log_date_time_string()}] {message}\n")
 
-    def send_body(self,status,body,content_type="application/json; charset=utf-8"):
+    def send_body(self,status,body,content_type="application/json; charset=utf-8",headers=None):
         if not isinstance(body,bytes):
             body = json.dumps(body,ensure_ascii=False).encode() if content_type.startswith("application/json") else body.encode()
+        # Text compresses about 5x (the app state: ~750 KB -> ~140 KB): much faster online.
+        compressed = len(body) > 1400 and "gzip" in self.headers.get("Accept-Encoding","") and content_type.split(";")[0] in COMPRESSIBLE
+        if compressed:
+            body = gzip.compress(body, 6)
         self.send_response(status)
         self.send_header("Content-Type",content_type)
         self.send_header("Content-Length",str(len(body)))
+        if compressed:
+            self.send_header("Content-Encoding","gzip")
+        if content_type.split(";")[0] in COMPRESSIBLE:
+            self.send_header("Vary","Accept-Encoding")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.send_header("Cache-Control","no-store")
         self.send_header("X-Content-Type-Options","nosniff")
         self.send_header("Referrer-Policy","no-referrer")
@@ -220,9 +233,18 @@ class Handler(BaseHTTPRequestHandler):
             newest = autobackup.latest(folder) if folder else None
             state["auto_backup"] = {"enabled": bool(folder), "latest": stamp(datetime.fromtimestamp(newest.stat().st_mtime,UTC)) if newest else None,
                                     "count": len(autobackup.files(folder)) if folder else 0}
-            state.update(token=TOKEN,auth=self.auth.enabled,user=self.auth.user(self.headers.get("Cookie")) or "",here_configured=routing.configured(),now=stamp(datetime.now(UTC)),timezone="Europe/Madrid",
+            state.update(token=TOKEN,auth=self.auth.enabled,user=self.auth.user(self.headers.get("Cookie")) or "",here_configured=routing.configured(),timezone="Europe/Madrid",
                          storage="turso" if isinstance(self.server.database,TursoReplica) else "sqlite")
-            return self.send_body(200,state)
+            # Unchanged data (the page asks every minute): answer "304 Not Modified" without sending it again.
+            tag = '"' + hashlib.sha1(json.dumps(state,ensure_ascii=False,sort_keys=True,default=str).encode()).hexdigest()[:24] + '"'
+            if self.headers.get("If-None-Match") == tag:
+                self.send_response(304)
+                self.send_header("ETag",tag)
+                self.send_header("Cache-Control","no-store")
+                self.end_headers()
+                return
+            state["now"] = stamp(datetime.now(UTC))
+            return self.send_body(200,state,headers={"ETag":tag})
         if path == "/api/deca.pdf":
             query = dict(parse_qsl(urlsplit(self.path).query))
             try:

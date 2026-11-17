@@ -988,6 +988,18 @@ class DispatchTests(unittest.TestCase):
             session = {"Cookie": headers["Set-Cookie"].split(";")[0]}
             status, headers, body = call("GET", "/js/core.js", headers=session)
             self.assertEqual((status, headers["Content-Type"].split(";")[0]), (200, "text/javascript"))
+            # Text is sent compressed when the browser accepts it; unchanged state is answered with 304.
+            import gzip
+            status, headers, body = call("GET", "/api/state", headers={**session, "Accept-Encoding": "gzip, deflate"})
+            self.assertEqual((status, headers["Content-Encoding"]), (200, "gzip"))
+            self.assertIn("orders", json.loads(gzip.decompress(body)))
+            tag = headers["ETag"]
+            status, headers, body = call("GET", "/api/state", headers={**session, "If-None-Match": tag})
+            self.assertEqual((status, body, headers["ETag"]), (304, b"", tag))
+            with connect(self.database) as db:
+                app.save_master(db, "trailers", {"plate": "TR-NEW"})
+            self.assertEqual(call("GET", "/api/state", headers={**session, "If-None-Match": tag})[0], 200)  # changed: sent again
+            self.assertNotIn("Content-Encoding", call("GET", "/api/state", headers=session)[1])  # no gzip asked: plain
             for bad in ("/js/../app.py", "/js/missing.js", "/js/Core.js", "/app.js"):
                 self.assertEqual(call("GET", bad, headers=session)[0], 404, bad)
             # The lockout follows Cloudflare's address: a faked X-Forwarded-For does not get around it.
