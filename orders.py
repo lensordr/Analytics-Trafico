@@ -294,7 +294,8 @@ def create_order(db, data):
               "available_at":plan["available_at"],"distance_km":route["distance_km"],"driving_hours":route["driving_hours"],
               "loading_hours":lh,"unloading_hours":uh,"route_source":route["source"],
               "route_details":json.dumps(route),"notes":text(data,"notes",False,5000),
-              "clock_input":json.dumps(initial),"plan":json.dumps(plan),**price}
+              "clock_input":json.dumps(initial),"plan":json.dumps(plan),
+              "trailer_pickup":1 if data.get("trailer_pickup") in (True,1,"1","true","on") else 0,**price}
     if data.get("id"):
         existing = item(db,"orders",data["id"])
         if existing["status"] != "Planned":

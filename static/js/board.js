@@ -5,8 +5,10 @@ function orderStops(o){if(o.stops?.length)return o.stops;const done=o.status==='
 const deliveryDay=o=>dayOf(o.delivered_at||o.unloading_at);
 function nextStop(o){return ['Cancelled','Completed'].includes(o.status)?null:orderStops(o).find(s=>s.status!=='Done')||null;}
 function lastDoneStop(o){return orderStops(o).filter(s=>s.status==='Done').pop()||null;}
-function stopKindLabel(o,s){const n=orderStops(o).length;return s.kind==='Trailer swap'?'Trailer swap':s.kind==='Loading'?(s.seq===1?'Loading':'Extra loading'):(s.seq===n?'Unloading':'Extra unloading');}
-function confirmLabel(o,s){return s.kind==='Loading'?'✓ Loaded':s.kind==='Trailer swap'?'✓ Swap done':s.seq===orderStops(o).length?'✓ Delivered':'✓ Unloaded';}
+// First stop of an order that only picks up a loaded, parked trailer.
+const trailerPickupStop=(o,s)=>!!o.trailer_pickup&&s.seq===1&&s.kind==='Loading';
+function stopKindLabel(o,s){const n=orderStops(o).length;return trailerPickupStop(o,s)?'Pick up loaded trailer':s.kind==='Trailer swap'?'Trailer swap':s.kind==='Loading'?(s.seq===1?'Loading':'Extra loading'):(s.seq===n?'Unloading':'Extra unloading');}
+function confirmLabel(o,s){return trailerPickupStop(o,s)?'✓ Trailer picked up':s.kind==='Loading'?'✓ Loaded':s.kind==='Trailer swap'?'✓ Swap done':s.seq===orderStops(o).length?'✓ Delivered':'✓ Unloaded';}
 function trailerChain(o){return [o.trailer||'no trailer',...orderStops(o).filter(s=>s.kind==='Trailer swap').map(s=>s.pick_trailer)].join(' → ');}
 function routeText(o){return orderStops(o).map(s=>stopIcon[s.kind]+' '+(getLocation(s.location_id)?.city||'?')).join(' → ');}
 // Delivery alerts: blue when an in-transit order is within 2 h of its planned unloading,

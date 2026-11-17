@@ -84,6 +84,7 @@ document.addEventListener('change',event=>{const input=event.target;
   if(input.id==='planning-date'&&input.value){selectedDay=input.value;render();}
   if(input.dataset.filter){filters[input.dataset.filter]=input.value;render();}
   if(input.name==='truck_id'&&input.closest('#order-form')){const truck=state.trucks.find(t=>t.id===Number(input.value));if(truck){const form=$('#order-form');form.elements.driver_id.value=truck.driver_id||'';setSearchSelectValue(form,'trailer_id',truck.trailer_id);preloadFromTrailer(form,truck.trailer_id);}}
+  if(input.name==='loading_id'&&input.closest('#order-form')?._pickupPlace&&input.value!==input.form._pickupPlace){input.form.elements.trailer_pickup.value='';input.form._pickupPlace=null;$('#trailer-preload').innerHTML='';}
   if(input.name==='trailer_id'&&input.closest('#order-form'))preloadFromTrailer(input.closest('#order-form'),input.value);
   if(input.name==='route_mode')syncRouteMode();
   if(input.name==='timing'&&input.closest('#order-form')){if(input.value==='rules')input.form.elements.clock_confirmed.checked=true;syncTiming();}

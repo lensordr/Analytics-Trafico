@@ -483,6 +483,20 @@ class DispatchTests(unittest.TestCase):
                                      "unloading_arrive_at":"2030-01-08T12:00"})
             self.assertTrue(first)
 
+    def test_trailer_pickup_order_shows_pickup_to_driver(self):
+        import driver
+        from driverlinks import driver_order
+        with connect(self.database) as db:
+            pickup = app.create_order(db,self.manual_payload(trailer_pickup="1"))
+            normal = app.create_order(db,self.manual_payload(pickup_at="2030-01-09T08:00",unloading_arrive_at="2030-01-10T15:00"))
+            self.assertEqual((app.item(db,"orders",pickup)["trailer_pickup"],app.item(db,"orders",normal)["trailer_pickup"]),(1,0))
+            token = app.driver_link(db,{"order_id":pickup})["token"]
+            order, stops, places = driver_order(db,token)
+        page = driver.render(token,order,stops,places,"es")
+        self.assertIn("Recoges el remolque cargado",page)
+        self.assertIn("HE COGIDO EL REMOLQUE",page)
+        self.assertNotIn("HE CARGADO",page)
+
     def test_delivery_confirmation_frees_truck_from_confirmed_time(self):
         with connect(self.database) as db:
             first = app.create_order(db,self.manual_payload())  # unloading Tue 15:00, planned free 16:00

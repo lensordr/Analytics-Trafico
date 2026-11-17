@@ -13,6 +13,7 @@ TEXT = {
         "title": "Cursa ta", "truck": "Camion", "trailer": "Remorcă",
         "Loading": "Încărcare", "Unloading": "Descărcare", "Trailer swap": "Schimb remorcă",
         "extra_loading": "Încărcare suplimentară", "extra_unloading": "Descărcare parțială",
+        "pickup": "Iei remorca încărcată", "do_pickup": "✅ AM LUAT REMORCA",
         "do_Loading": "✅ AM ÎNCĂRCAT", "do_Unloading": "✅ AM DESCĂRCAT", "do_Trailer swap": "✅ AM SCHIMBAT REMORCA",
         "sure": "Confirmi?", "yes": "DA, CONFIRM", "back": "Înapoi",
         "planned": "Planificat", "done": "Confirmat", "map": "📍 Deschide în Google Maps",
@@ -33,6 +34,7 @@ TEXT = {
         "title": "Tu viaje", "truck": "Camión", "trailer": "Remolque",
         "Loading": "Carga", "Unloading": "Descarga", "Trailer swap": "Cambio de remolque",
         "extra_loading": "Carga adicional", "extra_unloading": "Descarga parcial",
+        "pickup": "Recoges el remolque cargado", "do_pickup": "✅ HE COGIDO EL REMOLQUE",
         "do_Loading": "✅ HE CARGADO", "do_Unloading": "✅ HE DESCARGADO", "do_Trailer swap": "✅ HE CAMBIADO EL REMOLQUE",
         "sure": "¿Confirmas?", "yes": "SÍ, CONFIRMO", "back": "Volver",
         "planned": "Previsto", "done": "Confirmado", "map": "📍 Abrir en Google Maps",
@@ -82,7 +84,14 @@ def route_url(places):
     return url + "&travelmode=driving"
 
 
-def _label(stop, stops, t):
+def _pickup(stop, order):
+    """First stop of an order that only picks up a loaded, parked trailer."""
+    return bool(order and order.get("trailer_pickup")) and stop["seq"] == 1 and stop["kind"] == "Loading"
+
+
+def _label(stop, stops, t, order=None):
+    if _pickup(stop, order):
+        return t["pickup"]
     if stop["kind"] == "Loading" and stop["seq"] > 1:
         return t["extra_loading"]
     if stop["kind"] == "Unloading" and stop["seq"] < len(stops):
@@ -144,7 +153,7 @@ def render(token, order, stops, places, lang, confirm_seq=None, message="", erro
         parts.append(f'<div class="message ok big">{t["finished"]}</div>')
     else:
         place = places[next_stop["location_id"]]
-        action = t["do_" + next_stop["kind"]]
+        action = t["do_pickup"] if _pickup(next_stop, order) else t["do_" + next_stop["kind"]]
         if confirm_seq == next_stop["seq"]:
             control = (f'<form method="post" action="{base}"><input type="hidden" name="seq" value="{next_stop["seq"]}">'
                        f'<input type="hidden" name="l" value="{lang}"><p class="sure">{t["sure"]} {action[2:]}</p>'
@@ -152,7 +161,7 @@ def render(token, order, stops, places, lang, confirm_seq=None, message="", erro
                        f'<a class="back" href="{base}?l={lang}">{t["back"]}</a>')
         else:
             control = f'<a class="action" href="{base}?l={lang}&c={next_stop["seq"]}">{action}</a>'
-        parts.append(f'<section class="next"><div class="next-label">{t["next"]} · {_label(next_stop, stops, t)}</div>'
+        parts.append(f'<section class="next"><div class="next-label">{t["next"]} · {_label(next_stop, stops, t, order)}</div>'
                      f'<div class="place">{escape(place["company"])}</div><div class="city">{escape(place["city"])}</div>'
                      f'{control}<a class="map" href="{maps_url(place)}">{t["map"]}</a></section>')
     # Once something is loaded: open the DeCA (to show at a control), or fill it in.
@@ -166,7 +175,7 @@ def render(token, order, stops, places, lang, confirm_seq=None, message="", erro
     for stop in stops:
         place = places[stop["location_id"]]
         done = stop["status"] == "Done"
-        lines = [f'<div class="stop-title">{"✓" if done else str(stop["seq"]) + "."} {_label(stop, stops, t)}</div>',
+        lines = [f'<div class="stop-title">{"✓" if done else str(stop["seq"]) + "."} {_label(stop, stops, t, order)}</div>',
                  f'<div class="stop-place">{escape(place["company"])}</div>']
         address = place.get("address") or f'{place.get("postal_code", "")} {place.get("city", "")}'
         lines.append(f'<div class="stop-address">{escape(address)}</div>')

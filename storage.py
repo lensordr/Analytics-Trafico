@@ -379,6 +379,8 @@ def initialize(target):
         columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(orders)")}
         if "delivered_at" not in columns:
             db.execute("ALTER TABLE orders ADD COLUMN delivered_at TEXT")
+        if "trailer_pickup" not in columns:  # 1 = the first stop picks up a loaded trailer that is parked (no loading there)
+            db.execute("ALTER TABLE orders ADD COLUMN trailer_pickup INTEGER NOT NULL DEFAULT 0")
         columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(trailers)")}
         if "parked_location_id" not in columns:
             db.execute("ALTER TABLE trailers ADD COLUMN parked_location_id INTEGER REFERENCES locations(id)")
