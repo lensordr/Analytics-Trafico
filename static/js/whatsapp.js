@@ -22,7 +22,8 @@ function whatsappText(o,lang,link=''){const t=WA_TEXT[lang]||WA_TEXT.ro,stops=or
   for(const s of stops){const p=getLocation(s.location_id);lines.push('',bold(`${s.seq}. ${label(s)} · ${when(s)}`),`${p?.company||'?'}`);
     const where=[p?.address,p&&!(p.address||'').includes(p.postal_code||'#')?`${p.postal_code} ${p.city}`:''].filter(Boolean).join(', ');if(where)lines.push(where);
     if(s.kind==='Trailer swap')lines.push(`${t.leave} ${s.drop_trailer||'—'}, ${t.take} ${s.pick_trailer}`);
-    if(s.material||s.weight_kg)lines.push(`${t.material}: ${[s.material?s.material.split(' · ').pop():'',s.weight_kg?formatKg(s.weight_kg):''].filter(Boolean).join(' · ')}`);
+    // Material only: the weight is not sent to the driver.
+    if(s.material)lines.push(`${t.material}: ${s.material.split(' · ').pop()}`);
     lines.push(`📍 ${t.map}: ${mapsPlaceUrl(p)}`);}
   const route=mapsRouteUrl(stops.map(s=>getLocation(s.location_id)));if(route)lines.push('',bold(`🗺️ ${t.route.toUpperCase()}:`),route);
   if(o.notes)lines.push('',`${t.notes}: ${o.notes}`);
