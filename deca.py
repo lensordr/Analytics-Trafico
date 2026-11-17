@@ -2,10 +2,12 @@
 and a one-page PDF built with the standard library (Helvetica, WinAnsi).
 
 Mandatory content (Orden FOM/2861/2012): shipper and effective carrier with NIF, origin and destination,
-nature and weight of the goods, vehicle registration and date. The QR code holds the same data as text,
-so it can be read offline by any phone (the app is local: a link to it would not open elsewhere).
+nature and weight of the goods, vehicle registration and date. The QR code opens this PDF online at
+<online address>/d/<identifier> (a secret link, no sign-in). Without an online address in Settings it holds
+the same data as text, readable offline.
 """
 from datetime import datetime
+import re
 import secrets
 
 from materials import material_label
@@ -151,6 +153,8 @@ def document(db, order_id, shipper_id=None, notes=None):
         ],
         "notes": (order["deca_notes"] if notes is None else notes) or "—",
         "created": created.astimezone(ZONE).strftime("%d/%m/%Y %H:%M"),
+        # The QR opens this document online (secret link, no sign-in), as an inspector expects.
+        "link": f"{company['public_url'].rstrip('/')}/d/{order['deca_id']}" if company.get("public_url") and order["deca_id"] else "",
     }
 
 
@@ -247,7 +251,7 @@ def render(doc):
         text(b"F1", 10, 190, y - 4 - index * 13, part)
     y -= 4 + 13 * len(note_lines) + 14
     text(b"F1", 8, 50, y, f"Fecha de creación: {doc['created']}")
-    modules = qr.matrix(qr_text(doc))
+    modules = qr.matrix(doc.get("link") or qr_text(doc))
     size = len(modules)
     side = float(max(170, min(240, size * 3)))  # about 1 mm per module: easy to scan from a phone
     cell = side / size
@@ -264,6 +268,9 @@ def render(doc):
             else:
                 x += 1
     ops.append(b"f")
+    if doc.get("link"):
+        caption = "Escanee el código para abrir este documento en línea"
+        text(b"F1", 8, (595.28 - len(caption) * 3.9) / 2, top - side - 14, caption)
     content = b"\n".join(ops)
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
@@ -283,6 +290,16 @@ def render(doc):
     out += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
     out += b"trailer\n<< /Size %d /Root 1 0 R /Info 7 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, xref)
     return bytes(out)
+
+
+def pdf_by_link(db, deca_id):
+    """The DeCA PDF for the secret identifier in its QR link (/d/<id>), without signing in."""
+    if not re.fullmatch(r"[0-9a-f]{32}", deca_id or ""):
+        raise ValueError("Document not found.")
+    order = _row(db, "SELECT id FROM orders WHERE deca_id=?", deca_id)
+    if not order:
+        raise ValueError("Document not found.")
+    return pdf(db, order["id"])
 
 
 def pdf(db, order_id):

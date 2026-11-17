@@ -197,6 +197,16 @@ class DispatchTests(unittest.TestCase):
             deca.prepare(db, {"order_id": order_id, "shipper_id": shipper, "loads": [{"seq": 1, "material_id": steel, "weight_kg": "24100"}]})
             rows = dict(deca.document(db, order_id)["rows"])
         self.assertTrue(rows["1. Carga"].endswith("— INOX, 24.100 kg"))
+        # With an online address the QR opens the PDF by its secret link; unknown links give nothing.
+        with connect(self.database) as db:
+            self.assertEqual(deca.document(db, order_id)["link"], "")
+            deca.save_settings(db, {"public_url": "https://example.onrender.com/"})
+            self.assertEqual(deca.document(db, order_id)["link"], f"https://example.onrender.com/d/{first['id']}")
+            linked_name, linked = deca.pdf_by_link(db, first["id"])
+            self.assertTrue(linked.startswith(b"%PDF") and linked_name.endswith(".pdf"))
+            for wrong in ("0" * 32, "../etc", ""):
+                with self.assertRaisesRegex(ValueError, "not found"):
+                    deca.pdf_by_link(db, wrong)
         self.assertTrue(name.endswith(".pdf") and body.startswith(b"%PDF-1.4") and body.rstrip().endswith(b"%%EOF"))
         self.assertIn(b"(Documento de Control \\(DeCA\\)) Tj", body)
         self.assertIn(first["id"].encode(), body)
@@ -859,7 +869,7 @@ class DispatchTests(unittest.TestCase):
             connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
             connection.request(method, path, body=body, headers={"Host": f"127.0.0.1:{port}", "Content-Type": "application/x-www-form-urlencoded"})
             response = connection.getresponse()
-            data = response.read().decode()
+            data = response.read().decode(errors="replace")  # the DeCA PDF is binary
             connection.close()
             return response.status, dict(response.getheaders()), data
         token = link["token"]
@@ -877,8 +887,32 @@ class DispatchTests(unittest.TestCase):
             with connect(self.database) as db:
                 self.assertEqual([s["status"] for s in app.order_stop_rows(db, order_id)], ["Planned", "Planned"])
             status, headers, _ = call("POST", f"/s/{token}", b"seq=1&l=ro")
-            self.assertEqual((status, headers["Location"]), (303, f"/s/{token}?l=ro&ok=1"))
-            self.assertIn("AM DESCĂRCAT", call("GET", f"/s/{token}?l=ro&ok=1")[2])
+            # After a loading the optional DeCA form is offered.
+            self.assertEqual((status, headers["Location"]), (303, f"/s/{token}?l=ro&ok=1&deca=1"))
+            page = call("GET", f"/s/{token}?l=ro&ok=1&deca=1")[2]
+            self.assertIn("AM DESCĂRCAT", page)
+            self.assertIn("SALVEAZĂ ȘI FĂ DeCA", page)
+            self.assertNotIn("SALVEAZĂ ȘI FĂ DeCA", call("GET", f"/s/{token}?l=ro")[2])  # skipped: just the trip
+            self.assertIn("Completează DeCA", call("GET", f"/s/{token}?l=ro")[2])
+            self.assertIn("între 1 și 60000", call("POST", f"/s/{token}", "action=deca&seq=1&l=ro&weight_kg=0".encode())[2])
+            # Saved, but the office still has to add what only it knows (company details, shipper NIF).
+            status, headers, _ = call("POST", f"/s/{token}", "action=deca&seq=1&l=ro&material=Chatarra%20mixta&weight_kg=24500&dni=x%201234567l".encode())
+            self.assertEqual((status, headers["Location"]), (303, f"/s/{token}?l=ro&dc=0"))
+            self.assertIn("îl termină biroul", call("GET", f"/s/{token}?l=ro&dc=0")[2])
+            with connect(self.database) as db:
+                loading = app.order_stop_rows(db, order_id)[0]
+                self.assertEqual((loading["material"], loading["material_id"], loading["weight_kg"]), ("Chatarra mixta", None, 24500))
+                self.assertEqual(app.item(db, "drivers", self.driver)["dni_nie"], "X1234567L")
+                deca.save_settings(db, {"carrier_name": "Carrier Test SL", "carrier_nif": "B00000000"})
+                db.execute("UPDATE locations SET nif='B17327610' WHERE id=?", (self.a,))
+            status, headers, _ = call("POST", f"/s/{token}", b"action=deca&seq=1&l=es")
+            self.assertEqual(headers["Location"], f"/s/{token}?l=es&dc=1")
+            with connect(self.database) as db:
+                deca_id = app.item(db, "orders", order_id)["deca_id"]
+                self.assertIn("— Chatarra mixta, 24.500 kg", dict(deca.document(db, order_id)["rows"])["1. Carga"])
+            self.assertIn(f"/d/{deca_id}", call("GET", f"/s/{token}?l=es&dc=1")[2])
+            status, headers, _ = call("GET", f"/d/{deca_id}")
+            self.assertEqual((status, headers["Content-Type"]), (200, "application/pdf"))
             call("POST", f"/s/{token}", b"seq=1&l=ro")  # double tap: ignored
             call("POST", f"/s/{token}", b"seq=2&l=ro")
             with connect(self.database) as db:
@@ -887,6 +921,8 @@ class DispatchTests(unittest.TestCase):
             self.assertIn("finalizată", call("GET", f"/s/{token}")[2])
             # The dispatcher API still needs the password.
             self.assertEqual(call("GET", "/api/state")[0], 401)
+            # A DeCA QR link opens without signing in; an unknown one is simply not found (no login page).
+            self.assertEqual(call("GET", "/d/" + "0" * 32)[0], 404)
         finally:
             server.shutdown()
             server.server_close()
@@ -1011,7 +1047,8 @@ class DispatchTests(unittest.TestCase):
                 self.assertEqual(status,200)
                 self.assertTrue(json.loads(body)["auth"])
                 # A tampered cookie is rejected.
-                self.assertEqual(call("GET","/api/state",headers={"Cookie":session["Cookie"][:-1]+"0"})[0],401)
+                tampered=session["Cookie"][:-1]+("1" if session["Cookie"].endswith("0") else "0")  # always a different last character
+                self.assertEqual(call("GET","/api/state",headers={"Cookie":tampered})[0],401)
                 # Too many wrong passwords from one address: blocked, even with the right one.
                 for _ in range(8):
                     call("POST","/login",b"password=nope",{**form,"X-Forwarded-For":"203.0.113.9"})

@@ -21,6 +21,13 @@ TEXT = {
         "cancelled": "Această cursă a fost anulată. Sună la birou.",
         "saved": "Mulțumim! Am primit confirmarea.", "missing": "Link invalid. Cere un link nou de la birou.",
         "help": "Dacă ai apăsat greșit, sună la birou.", "other": "Español",
+        "deca_title": "📄 DeCA (opțional)",
+        "deca_intro": "Completează marfa, greutatea și DNI/NIE-ul tău pentru documentul de control. Poți sări peste: îl completează biroul.",
+        "f_material": "Marfă (ex. chatarra, inox)", "f_weight": "Greutate încărcată (kg)", "f_dni": "DNI / NIE-ul tău",
+        "deca_save": "SALVEAZĂ ȘI FĂ DeCA", "deca_skip": "Mai târziu", "deca_ready": "DeCA e gata. Arată-l de aici la control.",
+        "deca_open": "📄 Deschide DeCA", "deca_fill": "📄 Completează DeCA",
+        "deca_office": "Datele au fost salvate. DeCA îl termină biroul.",
+        "bad_weight": "Greutatea trebuie să fie între 1 și 60000 kg.",
     },
     "es": {
         "title": "Tu viaje", "truck": "Camión", "trailer": "Remolque",
@@ -34,6 +41,13 @@ TEXT = {
         "cancelled": "Este viaje está cancelado. Llama a la oficina.",
         "saved": "¡Gracias! Hemos recibido la confirmación.", "missing": "Enlace no válido. Pide un enlace nuevo a la oficina.",
         "help": "Si te has equivocado, llama a la oficina.", "other": "Română",
+        "deca_title": "📄 DeCA (opcional)",
+        "deca_intro": "Rellena la mercancía, el peso y tu DNI/NIE para el documento de control. Puedes saltarlo: lo completa la oficina.",
+        "f_material": "Mercancía (p. ej. chatarra, inox)", "f_weight": "Peso cargado (kg)", "f_dni": "Tu DNI / NIE",
+        "deca_save": "GUARDAR Y HACER DeCA", "deca_skip": "Más tarde", "deca_ready": "El DeCA está listo. Enséñalo desde aquí en un control.",
+        "deca_open": "📄 Abrir DeCA", "deca_fill": "📄 Rellenar DeCA",
+        "deca_office": "Datos guardados. La oficina completará el DeCA.",
+        "bad_weight": "El peso debe estar entre 1 y 60000 kg.",
     },
 }
 DAYS = {"ro": ["lun", "mar", "mie", "joi", "vin", "sâm", "dum"], "es": ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]}
@@ -92,7 +106,23 @@ def missing_page(lang):
     return page(f'<main><div class="message warn">{t["missing"]}</div></main>', lang, t["title"])
 
 
-def render(token, order, stops, places, lang, confirm_seq=None, message="", error=""):
+def deca_form(base, stop, place, lang, dni):
+    """Optional form shown after a loading is confirmed (no JavaScript: a plain form, then the page again)."""
+    t = TEXT[lang]
+    material = (stop.get("material") or "").split(" · ")[-1]
+    weight = f'{stop["weight_kg"]:.0f}' if stop.get("weight_kg") else ""
+    return (f'<section class="deca"><h2>{t["deca_title"]}</h2><p>{t["deca_intro"]}</p>'
+            f'<p class="deca-place">{escape(place["company"])}</p>'
+            f'<form method="post" action="{base}"><input type="hidden" name="action" value="deca">'
+            f'<input type="hidden" name="seq" value="{stop["seq"]}"><input type="hidden" name="l" value="{lang}">'
+            f'<label>{t["f_material"]}<input name="material" maxlength="120" value="{escape(material)}" autocomplete="off"></label>'
+            f'<label>{t["f_weight"]}<input name="weight_kg" type="number" inputmode="numeric" min="1" max="60000" step="1" value="{weight}"></label>'
+            f'<label>{t["f_dni"]}<input name="dni" maxlength="30" value="{escape(dni)}" autocomplete="off" autocapitalize="characters"></label>'
+            f'<button class="action" type="submit">{t["deca_save"]}</button></form>'
+            f'<a class="back" href="{base}?l={lang}">{t["deca_skip"]}</a></section>')
+
+
+def render(token, order, stops, places, lang, confirm_seq=None, message="", error="", deca_seq=None, dni=""):
     t = TEXT[lang]
     base = f"/s/{escape(token)}"
     next_stop = next((s for s in stops if s["status"] != "Done"), None)
@@ -105,6 +135,9 @@ def render(token, order, stops, places, lang, confirm_seq=None, message="", erro
         parts.append(f'<div class="message ok">{escape(message)}</div>')
     if error:
         parts.append(f'<div class="message warn">{escape(error)}</div>')
+    deca_stop = next((s for s in stops if s["seq"] == deca_seq and s["kind"] == "Loading" and s["status"] == "Done"), None)
+    if deca_stop and order["status"] != "Cancelled":
+        parts.append(deca_form(base, deca_stop, places[deca_stop["location_id"]], lang, dni))
     if order["status"] == "Cancelled":
         parts.append(f'<div class="message warn">{t["cancelled"]}</div>')
     elif next_stop is None:
@@ -122,6 +155,13 @@ def render(token, order, stops, places, lang, confirm_seq=None, message="", erro
         parts.append(f'<section class="next"><div class="next-label">{t["next"]} · {_label(next_stop, stops, t)}</div>'
                      f'<div class="place">{escape(place["company"])}</div><div class="city">{escape(place["city"])}</div>'
                      f'{control}<a class="map" href="{maps_url(place)}">{t["map"]}</a></section>')
+    # Once something is loaded: open the DeCA (to show at a control), or fill it in.
+    loaded = [s for s in stops if s["kind"] == "Loading" and s["status"] == "Done"]
+    if loaded and order["status"] != "Cancelled" and not deca_stop:
+        if order.get("deca_id"):
+            parts.append(f'<a class="map deca-link" href="/d/{escape(order["deca_id"])}">{t["deca_open"]}</a>')
+        else:
+            parts.append(f'<a class="map deca-link" href="{base}?l={lang}&deca={loaded[-1]["seq"]}">{t["deca_fill"]}</a>')
     items = []
     for stop in stops:
         place = places[stop["location_id"]]

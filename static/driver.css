@@ -28,3 +28,12 @@ body.driver{margin:0;background:#f2f5f2;color:#142b21;font-family:system-ui,"Seg
 .driver .stop-place{font-size:19px}
 .driver .stop-address,.driver .stop-time{color:#3d5148;font-size:16px}
 .driver .help{color:#5b6b63;font-size:15px;text-align:center;margin-top:18px}
+/* Optional DeCA form after a loading */
+.driver .deca{background:#fff;border:2px solid #174ea6;border-radius:16px;padding:16px;margin-bottom:18px}
+.driver .deca h2{margin:0 0 6px;font-size:22px}
+.driver .deca p{margin:0 0 10px;color:#3d5148;font-size:16px}
+.driver .deca .deca-place{font-weight:700;color:#142b21}
+.driver .deca label{display:block;font-weight:700;margin-bottom:12px}
+.driver .deca input{display:block;width:100%;margin-top:4px;padding:14px;font-size:20px;border:1px solid #b9c6bd;border-radius:10px;font-family:inherit}
+.driver .deca .action{background:#174ea6}
+.driver .deca-link{margin:0 0 18px}

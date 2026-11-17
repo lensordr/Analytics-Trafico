@@ -19,7 +19,7 @@ import driver
 import routing
 from auth import Auth
 from common import item, text
-from driverlinks import driver_link, driver_order
+from driverlinks import driver_deca, driver_link, driver_order
 from itv import delete_itv, import_itv, save_itv
 from masters import archive_master, restore_master, save_master
 from materials import delete_material, save_material
@@ -41,8 +41,8 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         # Driver links are secrets: never write them to the server log.
         message = format % args
-        if "/s/" in message:
-            message = re.sub(r"/s/[^ ?\"]+", "/s/…", message)
+        if "/s/" in message or "/d/" in message:
+            message = re.sub(r"/([sd])/[^ ?\"]+", r"/\1/…", message)
         sys.stderr.write(f"{self.address_string()} - - [{self.log_date_time_string()}] {message}\n")
 
     def send_body(self,status,body,content_type="application/json; charset=utf-8"):
@@ -122,7 +122,18 @@ class Handler(BaseHTTPRequestHandler):
         if query.get("ok") and not message and not error:
             message = driver.TEXT[lang]["saved"]
         confirm = int(query["c"]) if query.get("c", "").isdigit() else None
-        self.send_body(200, driver.render(token, order, stops, places, lang, confirm, message, error), "text/html; charset=utf-8")
+        deca_seq = int(query["deca"]) if query.get("deca", "").isdigit() else None
+        if query.get("dc") == "1" and not message:
+            message = driver.TEXT[lang]["deca_ready"]
+        elif query.get("dc") == "0" and not message:
+            message = driver.TEXT[lang]["deca_office"]
+        dni = ""
+        if deca_seq:
+            with connect(self.server.database) as db:
+                row = db.execute("SELECT dni_nie FROM drivers WHERE id=?", (order["driver_id"],)).fetchone()
+                dni = row["dni_nie"] if row else ""
+        self.send_body(200, driver.render(token, order, stops, places, lang, confirm, message, error, deca_seq, dni),
+                       "text/html; charset=utf-8")
 
     def driver_post(self,token):
         length = int(self.headers.get("Content-Length","0") or 0)
@@ -132,6 +143,13 @@ class Handler(BaseHTTPRequestHandler):
             order, stops, _ = driver_order(db, token)
             if order is None:
                 return self.send_body(404, driver.missing_page(lang), "text/html; charset=utf-8")
+            if form.get("action") == "deca":
+                try:
+                    ready = driver_deca(db, order, stops, form)
+                except ValueError as error:
+                    text = driver.TEXT[lang]["bad_weight"] if str(error) == "weight" else str(error)
+                    return self.driver_get(token, error=text, lang=lang)
+                return self.redirect(f"/s/{token}?l={lang}&dc={1 if ready else 0}")
             next_stop = next((s for s in stops if s["status"] != "Done"), None)
             if order["status"] == "Cancelled" or next_stop is None or str(next_stop["seq"]) != form.get("seq"):
                 # Double tap or an old page: nothing to confirm, just show the current state.
@@ -140,7 +158,9 @@ class Handler(BaseHTTPRequestHandler):
                 set_stop_status(db, {"order_id": order["id"], "seq": next_stop["seq"]})
             except ValueError as error:
                 return self.driver_get(token, error=str(error), lang=lang)
-        return self.redirect(f"/s/{token}?l={lang}&ok=1")
+        # After a loading: offer the optional DeCA form (material, weight, DNI/NIE).
+        extra = f"&deca={next_stop['seq']}" if next_stop["kind"] == "Loading" else ""
+        return self.redirect(f"/s/{token}?l={lang}&ok=1{extra}")
 
     def signed_in(self):
         return self.auth.valid(self.headers.get("Cookie"))
@@ -164,6 +184,22 @@ class Handler(BaseHTTPRequestHandler):
             return self.redirect("/login",self.auth.clear_cookie())
         if path.startswith("/s/"):
             return self.driver_get(path[3:])
+        if path.startswith("/d/"):
+            # DeCA opened from its QR code (inspection, client): the secret identifier is the key.
+            try:
+                with connect(self.server.database) as db:
+                    filename, body = deca.pdf_by_link(db, path[3:])
+            except ValueError:
+                return self.send_body(404, "<!doctype html><meta charset=utf-8><title>DeCA</title><p>Documento no encontrado.</p>",
+                                      "text/html; charset=utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/pdf")
+            self.send_header("Content-Disposition", f'inline; filename="{filename}"')
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Robots-Tag", "noindex")
+            self.end_headers()
+            return self.wfile.write(body)
         if path not in ("/style.css","/driver.css") and not self.signed_in():
             return self.send_body(401,{"error":"Please sign in again."}) if path.startswith("/api/") else self.redirect("/login")
         if path == "/api/state":
