@@ -189,6 +189,13 @@ own copy of the price, so changing or deleting a tariff never alters past orders
 (the export stays in `data/`, never committed). Places that were not yet saved
 became locations with the note "Added from the Witruck tariffs."
 
+`import_witruck_routes.py` imported the Witruck routes of 2–15 November 2026 as
+orders (notes start with "Witruck route N · OC M"). Witruck has only the day, so
+each tractor's loadings start at 06:00 one after another (2 h loading, 65 km/h,
+2 h unloading); finished routes are Completed, assigned ones In transit. Missing
+tractors, drivers (with their carrier), places and materials were added. The
+carrier's cost was not imported.
+
 ## Online (Render)
 
 When the `PORT` environment variable is set (Render sets it), the app listens on
