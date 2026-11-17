@@ -13,13 +13,12 @@ function mapsRouteUrl(points){const list=points.map(mapsPoint).filter(Boolean);i
   return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(list[0])}&destination=${encodeURIComponent(list[list.length-1])}${middle.length?'&waypoints='+encodeURIComponent(middle.join('|')):''}&travelmode=driving`;}
 function waPhone(raw){let digits=String(raw||'').replace(/[^\d+]/g,'');if(digits.startsWith('+'))return digits.slice(1).replace(/\D/g,'');digits=digits.replace(/\D/g,'');if(digits.startsWith('00'))return digits.slice(2);if(/^[6789]\d{8}$/.test(digits))return '34'+digits;return digits;}
 function whatsappText(o,lang,link=''){const t=WA_TEXT[lang]||WA_TEXT.ro,stops=orderStops(o),last=stops.length,driver=state.drivers.find(d=>d.id===o.driver_id),first=(driver?.name||o.driver_name||'').split(' ')[0];
-  const stamp=new Intl.DateTimeFormat(lang==='es'?'es-ES':'ro-RO',{timeZone:'Europe/Madrid',weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
-  const when=s=>stamp.format(new Date(s.planned_at))+(s.seq>1?` (${t.eta})`:'');
+  // No times in the message: each driver plans their own day; the estimates stay in the dashboard.
   const label=s=>s.kind==='Trailer swap'?t.swap:s.kind==='Loading'?(s.seq===1?t.loading:t.extraLoading):(s.seq===last?t.unloading:t.extraUnloading);
   // *text* is bold in WhatsApp. The confirmation link comes right after the greeting: long messages are collapsed, so it must be visible first.
   const bold=text=>`*${text}*`;
   const lines=[t.hello(first)];if(link)lines.push('',bold(t.link),`${link}?l=${lang}`);lines.push('',`🚛 ${o.number} · ${t.truck} ${o.plate}${o.trailer?` · ${t.trailer} ${o.trailer}`:''}`);
-  for(const s of stops){const p=getLocation(s.location_id);lines.push('',bold(`${s.seq}. ${label(s)} · ${when(s)}`),`${p?.company||'?'}`);
+  for(const s of stops){const p=getLocation(s.location_id);lines.push('',bold(`${s.seq}. ${label(s)}`),`${p?.company||'?'}`);
     const where=[p?.address,p&&!(p.address||'').includes(p.postal_code||'#')?`${p.postal_code} ${p.city}`:''].filter(Boolean).join(', ');if(where)lines.push(where);
     if(s.kind==='Trailer swap')lines.push(`${t.leave} ${s.drop_trailer||'—'}, ${t.take} ${s.pick_trailer}`);
     // Material only: the weight is not sent to the driver.
