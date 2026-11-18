@@ -232,7 +232,7 @@
 .today-status{display:inline-block;margin-top:3px;font-size:11px;font-weight:650;padding:1px 7px;border-radius:9px;background:#eef1ee;color:#55615a}
 .today-status.late{background:#c4372b;color:#fff}.today-status.road{background:#e6eefc;color:#2a55a8}.today-status.done{background:#e3f3ea;color:var(--green)}
 .today-place strong,.today-vehicle strong{display:block;font-size:15px}.today-place small,.today-vehicle small{display:block;color:var(--muted)}
-.today-driver{white-space:nowrap}.today-driver .btn{margin-left:6px}.today-order .btn{margin-top:6px}
+.today-driver{white-space:nowrap}.today-driver .btn{margin-left:6px}.today-action{text-align:right;white-space:nowrap;padding-right:20px}
 /* ---- Data to complete */
 .data-list{padding:0 20px 14px}.data-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}.data-row small{display:block;color:var(--muted)}
 .geo-progress{margin:-6px 0 18px;padding:0 4px}.geo-bar{height:8px;background:#e6ebe6;border-radius:5px;overflow:hidden}.geo-bar span{display:block;height:100%;width:0;background:var(--green);transition:width .3s}
