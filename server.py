@@ -13,11 +13,14 @@ import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qsl, urlsplit
+from html import escape
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
+import assistant
 import autobackup
 import deca
 import driver
+import oauth
 import routing
 from auth import Auth
 from common import item, text
@@ -36,6 +39,11 @@ from upcoming import weekly_availability
 ROOT = Path(__file__).resolve().parent
 TOKEN = secrets.token_urlsafe(32)
 COMPRESSIBLE = {"application/json", "text/html", "text/javascript", "text/css"}
+
+CONNECTOR_GET = {"/.well-known/oauth-protected-resource","/.well-known/oauth-protected-resource/mcp",
+                 "/.well-known/oauth-authorization-server","/.well-known/oauth-authorization-server/mcp",
+                 "/.well-known/openid-configuration","/oauth/authorize","/mcp"}
+CONNECTOR_POST = {"/oauth/register","/oauth/token","/oauth/authorize","/mcp"}
 
 class Handler(BaseHTTPRequestHandler):
     def version_string(self):
@@ -70,7 +78,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy","no-referrer")
         if self.https():
             self.send_header("Strict-Transport-Security","max-age=31536000")
-        self.send_header("Content-Security-Policy","default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+        if "Content-Security-Policy" not in (headers or {}):
+            self.send_header("Content-Security-Policy","default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -202,6 +211,119 @@ class Handler(BaseHTTPRequestHandler):
     def signed_in(self):
         return self.auth.valid(self.headers.get("Cookie"))
 
+    # ---- Claude connector (MCP): OAuth sign-in with the dispatcher's password, then read-only tools at /mcp
+    def base_url(self):
+        return f"{'https' if self.https() else 'http'}://{self.headers.get('Host')}"
+
+    def local_only(self):
+        return not getattr(self.server,"public_hosts",None)
+
+    def read_form(self, limit=8000):
+        length = int(self.headers.get("Content-Length","0") or 0)
+        if not 0 < length < limit:
+            return {}
+        raw = self.rfile.read(length).decode("utf-8","replace")
+        if self.headers.get("Content-Type","").startswith("application/json"):
+            try:
+                data = json.loads(raw)
+            except ValueError:
+                return {}
+            return data if isinstance(data,dict) else {}
+        return dict(parse_qsl(raw))
+
+    def connector_page(self, params, message="", status=200):
+        fields = "".join(f'<input type="hidden" name="{key}" value="{escape(str(params.get(key,"")))}">'
+                         for key in ("client_id","redirect_uri","state","code_challenge","code_challenge_method","response_type"))
+        user = ('<div class="field"><label for="user">User</label><input id="user" name="user" autocomplete="username" '
+                'autocapitalize="none" required autofocus></div>') if self.auth.named else ""
+        password = ('<div class="field"><label for="password">Password</label><input id="password" name="password" type="password" '
+                    f'autocomplete="current-password" required{"" if self.auth.named else " autofocus"}></div>') if self.auth.enabled else ""
+        note = f'<div class="notice warning">{escape(message)}</div>' if message else ""
+        page = ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+                '<title>Connect Claude · MalcomTrans</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/style.css"></head>'
+                '<body class="login-page"><div class="login-box panel padded">'
+                '<div class="brand login-brand"><span class="brand-mark">M<span>↗</span></span><span>MalcomTrans<small>DAILY TRAKING</small></span></div>'
+                '<h1>Connect Claude</h1><p class="subtitle">Claude will be able to <strong>read</strong> the planning (tractors, orders, places, '
+                'saved routes) to recommend tractors and loads. It cannot create, change or delete anything. '
+                'Phones, driver links and documents are not shared.</p>'
+                f'{note}<form method="post" action="/oauth/authorize" class="login-form">{fields}{user}{password}'
+                '<button class="btn primary" type="submit">Allow read access</button></form></div></body></html>')
+        targets = " ".join(sorted({f"{urlsplit(uri).scheme}://{urlsplit(uri).netloc}" for uri in oauth.CLAUDE_CALLBACKS}))
+        if self.local_only():
+            targets += " http://127.0.0.1:* http://localhost:*"
+        csp = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "
+               f"frame-ancestors 'none'; base-uri 'none'; form-action 'self' {targets}")
+        self.send_body(status,page,"text/html; charset=utf-8",{"Content-Security-Policy":csp})
+
+    def connector_request_error(self, params):
+        if params.get("response_type") != "code":
+            return "Unsupported response type."
+        if not oauth.redirect_allowed(params.get("redirect_uri",""), self.local_only()):
+            return "This address is not allowed to connect."
+        if not params.get("code_challenge") or params.get("code_challenge_method") != "S256":
+            return "PKCE (S256) is required."
+        return None
+
+    def connector_get(self, path):
+        base = self.base_url()
+        if path in ("/.well-known/oauth-protected-resource","/.well-known/oauth-protected-resource/mcp"):
+            return self.send_body(200, oauth.resource_metadata(base))
+        if path in ("/.well-known/oauth-authorization-server","/.well-known/oauth-authorization-server/mcp","/.well-known/openid-configuration"):
+            return self.send_body(200, oauth.metadata(base))
+        if path == "/oauth/authorize":
+            params = dict(parse_qsl(urlsplit(self.path).query))
+            problem = self.connector_request_error(params)
+            if problem:
+                return self.send_body(400, f"<!doctype html><meta charset=utf-8><title>MalcomTrans</title><p>{escape(problem)}</p>", "text/html; charset=utf-8")
+            return self.connector_page(params)
+        return self.send_body(405, {"error": "Use POST"}, headers={"Allow": "POST"})
+
+    def connector_post(self, path):
+        if path == "/oauth/register":
+            status, body = oauth.register(self.read_form(), self.local_only())
+            return self.send_body(status, body)
+        if path == "/oauth/token":
+            status, body = oauth.exchange(self.auth, self.read_form())
+            return self.send_body(status, body, headers={"Pragma": "no-cache"})
+        if path == "/oauth/authorize":
+            params = self.read_form()
+            problem = self.connector_request_error(params)
+            if problem:
+                return self.send_body(400, {"error": problem})
+            user = ""
+            if self.auth.enabled:
+                address = self.client_address_text()
+                if self.auth.blocked(address):
+                    return self.connector_page(params, "Too many wrong passwords. Wait 15 minutes and try again.", 429)
+                user = self.auth.check(address, params.get("password",""), params.get("user",""))
+                if user is None:
+                    time.sleep(1)
+                    return self.connector_page(params, "Wrong user or password." if self.auth.named else "Wrong password.", 401)
+            code = oauth.new_code(self.auth, user, params.get("client_id",""), params["redirect_uri"], params["code_challenge"])
+            query = urlencode({"code": code, **({"state": params["state"]} if params.get("state") else {})})
+            return self.redirect(params["redirect_uri"] + ("&" if "?" in params["redirect_uri"] else "?") + query)
+        # /mcp: JSON-RPC with the bearer token
+        header = self.headers.get("Authorization","")
+        token = oauth.verify(self.auth, "access", header[7:].strip()) if header[:7].lower() == "bearer " else None
+        if token is None:
+            return self.send_body(401, {"error": "invalid_token"}, headers={
+                "WWW-Authenticate": f'Bearer resource_metadata="{self.base_url()}/.well-known/oauth-protected-resource"'})
+        length = int(self.headers.get("Content-Length","0") or 0)
+        if not 0 < length < 100000:
+            return self.send_body(400, {"jsonrpc":"2.0","id":None,"error":{"code":-32700,"message":"Invalid request size"}})
+        try:
+            message = json.loads(self.rfile.read(length))
+        except ValueError:
+            return self.send_body(400, {"jsonrpc":"2.0","id":None,"error":{"code":-32700,"message":"Parse error"}})
+        open_db = lambda: connect(self.server.database)
+        if isinstance(message, list):
+            answers = [a for a in (assistant.handle(m, open_db) for m in message) if a is not None]
+            return self.send_body(200, answers) if answers else self.send_body(202, b"", "application/json")
+        answer = assistant.handle(message, open_db)
+        if answer is None:
+            return self.send_body(202, b"", "application/json")
+        return self.send_body(200, answer)
+
     def do_HEAD(self):
         # Uptime monitors (UptimeRobot) check with HEAD: same answer as GET, without the body.
         path = urlsplit(self.path).path
@@ -221,6 +343,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.redirect("/login",self.auth.clear_cookie())
         if path.startswith("/s/"):
             return self.driver_get(path[3:])
+        if path in CONNECTOR_GET:
+            return self.connector_get(path)
         if path.startswith("/d/"):
             # DeCA opened from its QR code (inspection, client): the secret identifier is the key.
             try:
@@ -313,6 +437,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.handle_login()
         if self.valid_host() and urlsplit(self.path).path.startswith("/s/"):
             return self.driver_post(urlsplit(self.path).path[3:])
+        if self.valid_host() and urlsplit(self.path).path in CONNECTOR_POST:
+            return self.connector_post(urlsplit(self.path).path)
         if self.valid_host() and not self.signed_in():
             return self.send_body(401,{"error":"Please sign in again."})
         if not self.valid_host() or not secrets.compare_digest(self.headers.get("X-CSRF-Token",""),TOKEN):

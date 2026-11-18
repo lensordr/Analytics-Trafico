@@ -1032,6 +1032,86 @@ class DispatchTests(unittest.TestCase):
             server.server_close()
             thread.join()
 
+    def test_claude_connector_tools_read_the_planning(self):
+        import assistant
+        with connect(self.database) as db:
+            app.create_order(db,self.payload)
+        now=parse_time("2030-01-07T06:00")
+        with connect(self.database) as db:
+            fleet=assistant.call(db,"fleet_status",{},now)
+            truck=fleet["tractors"][0]
+            self.assertEqual(truck["plate"],"TEST-001")
+            self.assertEqual(truck["free_at"]["city"],"Paris")
+            self.assertEqual(len(truck["bookings"]),1)
+            self.assertEqual(assistant.call(db,"find_places",{"query":"warehouse par"},now)["places"][0]["id"],self.b)
+            suggestion=assistant.call(db,"suggest_tractors",{"location_id":self.a,"at":"2030-01-07 10:00"},now)
+            self.assertEqual(suggestion["options"][0]["plate"],"TEST-001")
+            loads=assistant.call(db,"loads_near",{"plate":"test 001"},now)
+            self.assertEqual(loads["from"]["city"],"Paris")
+            with self.assertRaises(ValueError):
+                assistant.call(db,"loads_near",{"plate":"NOPE"},now)
+        # Arriving at night or after 18:30: the loading starts at 08:00.
+        self.assertEqual(stamp(assistant.can_work(parse_time("2030-01-08T02:10"))),"2030-01-08T08:00+01:00")
+        self.assertEqual(stamp(assistant.can_work(parse_time("2030-01-08T19:00"))),"2030-01-09T08:00+01:00")
+
+    def test_claude_connector_needs_sign_in_and_pkce(self):
+        import base64, hashlib
+        from urllib.parse import parse_qs, urlencode, urlsplit
+        from urllib.request import HTTPRedirectHandler, build_opener
+        server=app.ThreadingHTTPServer(("127.0.0.1",0),app.Handler)
+        server.database=self.database
+        server.auth=app.Auth(None,"test-secret",{"ana":"long password 1"})
+        thread=threading.Thread(target=server.serve_forever,daemon=True)
+        thread.start()
+        url=f"http://127.0.0.1:{server.server_port}"
+        class Stay(HTTPRedirectHandler):
+            def redirect_request(self,*args,**kwargs):
+                return None
+        opener=build_opener(Stay)
+        def send(path,data,form=False,headers=None):
+            body=urlencode(data).encode() if form else json.dumps(data).encode()
+            request=Request(url+path,data=body,headers={"Content-Type":"application/x-www-form-urlencoded" if form else "application/json",**(headers or {})})
+            try:
+                with opener.open(request) as response:
+                    return response.status,response.headers,response.read()
+            except HTTPError as error:
+                return error.code,error.headers,error.read()
+        try:
+            status,headers,_=send("/mcp",{"jsonrpc":"2.0","id":1,"method":"tools/list"})
+            self.assertEqual(status,401)
+            self.assertIn("oauth-protected-resource",headers["WWW-Authenticate"])
+            self.assertEqual(send("/oauth/register",{"redirect_uris":["https://evil.example/cb"]})[0],400)
+            client=json.loads(send("/oauth/register",{"redirect_uris":["https://claude.ai/api/mcp/auth_callback"]})[2])["client_id"]
+            verifier="v"*50
+            challenge=base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+            ask={"response_type":"code","client_id":client,"redirect_uri":"https://claude.ai/api/mcp/auth_callback","state":"s1",
+                 "code_challenge":challenge,"code_challenge_method":"S256"}
+            self.assertEqual(send("/oauth/authorize",{**ask,"user":"ana","password":"wrong"},True)[0],401)
+            status,headers,_=send("/oauth/authorize",{**ask,"user":"ana","password":"long password 1"},True)
+            self.assertEqual(status,303)
+            self.assertTrue(headers["Location"].startswith("https://claude.ai/api/mcp/auth_callback?"))
+            code=parse_qs(urlsplit(headers["Location"]).query)["code"][0]
+            exchange={"grant_type":"authorization_code","code":code,"redirect_uri":ask["redirect_uri"],"client_id":client}
+            self.assertEqual(send("/oauth/token",{**exchange,"code_verifier":"wrong"},True)[0],400)
+            status,_,body=send("/oauth/token",{**exchange,"code_verifier":verifier},True)
+            self.assertEqual(status,200)
+            tokens=json.loads(body)
+            self.assertEqual(send("/oauth/token",{**exchange,"code_verifier":verifier},True)[0],400)  # a code works once
+            bearer={"Authorization":"Bearer "+tokens["access_token"]}
+            status,_,body=send("/mcp",{"jsonrpc":"2.0","id":2,"method":"tools/list"},headers=bearer)
+            self.assertEqual({tool["name"] for tool in json.loads(body)["result"]["tools"]},
+                             {"find_places","fleet_status","suggest_tractors","loads_near"})
+            status,_,body=send("/mcp",{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"fleet_status","arguments":{}}},headers=bearer)
+            self.assertIn("TEST-001",json.loads(body)["result"]["content"][0]["text"])
+            self.assertEqual(send("/mcp",{"jsonrpc":"2.0","id":4,"method":"ping"},headers={"Authorization":"Bearer "+tokens["refresh_token"]})[0],401)
+            # A removed dispatcher loses access.
+            server.auth=app.Auth(None,"test-secret",{"other":"long password 2"})
+            self.assertEqual(send("/mcp",{"jsonrpc":"2.0","id":5,"method":"ping"},headers=bearer)[0],401)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
     def test_driver_link_page_confirms_next_stop_only(self):
         from auth import Auth
         import deca, http.client

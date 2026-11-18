@@ -1,6 +1,6 @@
 """Daily Traking MalcomTrans: start the server (python app.py).
 
-The code lives in modules: common, masters, materials, tariffs, orders, nearby, nextloads, itv, driverlinks,
+The code lives in modules: common, masters, materials, tariffs, orders, nearby, nextloads, itv, driverlinks, assistant, oauth,
 server, plus planner, storage, deca, driver, qr, xlsx, routing, upcoming, auth, config.
 """
 import argparse
