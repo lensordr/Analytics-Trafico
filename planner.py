@@ -1,5 +1,5 @@
 """Conservative single-driver EU planning; not a tachograph/compliance system."""
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 UTC = timezone.utc
@@ -26,6 +26,29 @@ def parse_time(value):
 
 def stamp(dt):
     return dt.astimezone(ZONE).isoformat(timespec="minutes")
+
+
+# Loading and unloading places: after 18:30 almost everything is closed, so the stop moves to the next day at 08:00.
+# Sunday nothing loads or unloads (moves to Monday 08:00). Saturday few places work: allowed, with a warning.
+CLOSES_AT, OPENS_AT = (18, 30), 8
+WORK_KINDS = ("Loading", "Unloading")
+
+
+def working_start(at):
+    """When a loading/unloading arriving at `at` can start."""
+    local = at.astimezone(ZONE)
+    day, moved = local.date(), local.weekday() == 6
+    if (local.hour, local.minute) > CLOSES_AT:
+        day, moved = day + timedelta(days=1), True
+    if not moved:
+        return at
+    if day.weekday() == 6:
+        day += timedelta(days=1)
+    return datetime.combine(day, time(OPENS_AT), ZONE).astimezone(UTC)
+
+
+def closed_label(start):
+    return f"Closed · waits until {start.astimezone(ZONE):%a %d.%m %H:%M}"
 
 
 def week_key(dt):
@@ -167,12 +190,20 @@ def route_plan(start, stops, initial=None, state=None):
     for index, stop in enumerate(stops):
         if index:
             clock.run("Driving", round(stop.get("leg_hours", 0) * 60))
-        arrival = clock.t
+        arrival, next_day = clock.t, False
+        if index and stop["kind"] in WORK_KINDS:
+            opens = working_start(arrival)
+            if opens > arrival:
+                waited = len(clock.events)
+                clock.advance_idle(opens)
+                for event in clock.events[waited:]:
+                    event["kind"] = closed_label(opens) + (" (counts as rest)" if event["minutes"] >= 660 else "")
+                next_day = True
         before = len(clock.events)
         clock.run(stop["kind"], round(stop["handling_hours"] * 60))
         handling = [event for event in clock.events[before:] if event["kind"] == stop["kind"]]
         begin = parse_time(handling[0]["start"]) if handling else arrival
-        times.append({"arrival_at": stamp(arrival), "start_at": stamp(begin), "end_at": stamp(clock.t)})
+        times.append({"arrival_at": stamp(arrival), "start_at": stamp(begin), "end_at": stamp(clock.t), "next_day": next_day})
         if index == 0:
             departure = clock.t
     ready = clock.t

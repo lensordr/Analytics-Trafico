@@ -211,3 +211,9 @@
 .map-result h3{font-size:13px;margin:0 0 4px}.map-result h3 span{font-weight:500;color:#6b7a66;font-size:11px}.map-result p{font-size:10px;margin:3px 0;color:#5d6b58}.map-result .actions{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}
 .map-results .subtitle{margin:12px 0}.map-waiting-row{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:10px 18px;border-top:1px solid var(--line);font-size:11px}.map-waiting-row small{grid-column:1;color:var(--muted);font-size:10px}.map-waiting-row .btn{grid-column:2;grid-row:1/span 3;align-self:center}
 @media (max-width:1100px){.map-page{grid-template-columns:1fr}.fleet-map{height:60vh}}
+
+/* Stop moved to the next working morning (closed after 18:30 / Sunday) */
+.next-day-chip{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:10px;background:#eef0ff;color:#3b3f9e;font-size:11px;font-weight:600;white-space:nowrap}
+
+/* Trailer view: next free window and the route actions */
+.trailer-next{display:flex;flex-direction:column;gap:2px;min-width:190px}.trailer-next span{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}.trailer-next .weekly-actions{margin-top:6px;display:flex;flex-wrap:wrap;gap:6px}

@@ -8,7 +8,7 @@ from common import identity, item, text
 from masters import selected_trailer
 from materials import material_label
 from tariffs import order_price
-from planner import Clock, UTC, ZONE, number, parse_time, route_plan, stamp, week_key
+from planner import WORK_KINDS, Clock, UTC, ZONE, closed_label, number, parse_time, route_plan, stamp, week_key, working_start
 from storage import begin_write, reserve_id, rows
 
 STOP_KINDS = ("Loading", "Unloading", "Trailer swap", "Tractor change")
@@ -44,28 +44,31 @@ def manual_leg(source, km_key, hours_key, label, manual_times=False):
     return km, hours
 
 
-def arrival_input(source, key, label):
-    if not source.get(key):
-        raise ValueError(f"{label}: enter the planned arrival time.")
-    return parse_time(source[key])
-
-
 def manual_plan(pickup, stops):
     """Plan from arrival times entered by the dispatcher; no rests are added or checked."""
     times, timeline, previous_end = [], [], None
     for index, stop in enumerate(stops):
         arrival = pickup if index == 0 else stop["arrive_at"]
+        if previous_end and arrival < previous_end and stop.get("estimated"):
+            arrival = previous_end
         if previous_end and arrival < previous_end:
             raise ValueError(f"Stop {index + 1} ({stop['kind'].lower()}, {stop['location']['city']}): the arrival "
                              f"cannot be before the previous stop finishes ({stamp(previous_end)[11:16]} on {stamp(previous_end)[:10]}).")
         if previous_end and arrival > previous_end:
-            timeline.append({"kind": "On the road (time from driver)", "start": stamp(previous_end), "end": stamp(arrival),
+            timeline.append({"kind": "On the road (estimated, with breaks and rests)" if stop.get("estimated") else "On the road (time from driver)",
+                             "start": stamp(previous_end), "end": stamp(arrival),
                              "minutes": round((arrival - previous_end).total_seconds() / 60)})
-        end = arrival + timedelta(hours=stop["handling_hours"])
-        if end > arrival:
-            timeline.append({"kind": stop["kind"], "start": stamp(arrival), "end": stamp(end),
+        # Arriving after 18:30 (or on Sunday): the loading/unloading is the next working morning.
+        start = working_start(arrival) if index and stop["kind"] in WORK_KINDS else arrival
+        if start > arrival:
+            timeline.append({"kind": closed_label(start), "start": stamp(arrival), "end": stamp(start),
+                             "minutes": round((start - arrival).total_seconds() / 60)})
+        end = start + timedelta(hours=stop["handling_hours"])
+        if end > start:
+            timeline.append({"kind": stop["kind"], "start": stamp(start), "end": stamp(end),
                              "minutes": round(stop["handling_hours"] * 60)})
-        times.append({"arrival_at": stamp(arrival), "start_at": stamp(arrival), "end_at": stamp(end)})
+        times.append({"arrival_at": stamp(arrival), "start_at": stamp(start), "end_at": stamp(end),
+                      "next_day": start > arrival, "estimated": bool(stop.get("estimated"))})
         previous_end = end
     return {"timing": "manual", "departure_at": times[0]["end_at"], "arrival_at": times[-1]["arrival_at"],
             "unloading_at": times[-1]["start_at"], "available_at": times[-1]["end_at"],
@@ -112,7 +115,7 @@ def journey_stops(db, data, create=False):
                 "handling_hours": number(extra, "handling_hours", 0.5 if kind in QUICK_STOPS else DEFAULT_HANDLING_HOURS, 0, 6),
                 "leg": manual_leg(extra, "leg_km", "leg_hours", f"Stop {index}", manual_times)}
         if manual_times:
-            stop["arrive_at"] = arrival_input(extra, "arrive_at", f"Stop {index}")
+            stop["arrive_at"] = optional_arrival(extra, "arrive_at")
         if kind == "Loading":
             stop["material"] = chosen_material(db, extra.get("material_id"))
         if kind in ("Loading", "Unloading"):
@@ -134,8 +137,39 @@ def journey_stops(db, data, create=False):
                   "weight_kg": weight(data, "unloading_weight_kg", "Final unloading"),
                   "leg": manual_leg(data, "distance_km", "driving_hours", "Unloading leg", manual_times)})
     if manual_times:
-        stops[-1]["arrive_at"] = arrival_input(data, "unloading_arrive_at", "Final unloading")
+        stops[-1]["arrive_at"] = optional_arrival(data, "unloading_arrive_at")
     return stops
+
+
+def optional_arrival(source, key):
+    """Manual times: an empty arrival is estimated from the driving time (see estimate_arrivals)."""
+    return parse_time(source[key]) if source.get(key) else None
+
+
+def estimate_arrivals(pickup, stops):
+    """Fill the empty arrival times: a rested single driver, the driving time of each leg with breaks and rests,
+    and the closing time of loading/unloading places. Times the dispatcher entered are kept."""
+    clock = Clock(pickup)
+    clock.run(stops[0]["kind"], round(stops[0]["handling_hours"] * 60))
+    for index, stop in enumerate(stops[1:], start=2):
+        if stop.get("arrive_at"):
+            if stop["arrive_at"] >= clock.t:
+                clock.advance_idle(stop["arrive_at"])
+            else:
+                clock = Clock(stop["arrive_at"])
+        else:
+            if stop["leg_hours"] <= 0:
+                raise ValueError(f"Stop {index} ({stop['kind'].lower()}, {stop['location']['city']}): enter the planned "
+                                 "arrival, or the driving time from the previous stop, so the arrival can be estimated.")
+            clock.run("Driving", round(stop["leg_hours"] * 60))
+            stop["arrive_at"], stop["estimated"] = clock.t, True
+        if stop["kind"] in WORK_KINDS:
+            opens = working_start(clock.t)
+            if opens > clock.t:
+                clock.advance_idle(opens)
+        clock.run(stop["kind"], round(stop["handling_hours"] * 60))
+        if stop["kind"] == "Tractor change":
+            clock = Clock(clock.t)  # the next tractor has its own driver
 
 
 def build_plan(db, data, create=False):
@@ -196,7 +230,10 @@ def build_plan(db, data, create=False):
     if mode == "here":
         route["profile"] = {key: truck[key] for key in ("height", "width", "length", "weight")}
     if order_timing(data) == "manual":
-        return truck, driver, trailer, stops, pickup, {}, route, manual_plan(pickup, stops)
+        estimate_arrivals(pickup, stops)
+        plan = manual_plan(pickup, stops)
+        route["notices"] += day_notices(stops, plan)
+        return truck, driver, trailer, stops, pickup, {}, route, plan
     clock_data = data.get("clock", {})
     if not isinstance(clock_data, dict):
         raise ValueError("Invalid driving clock.")
@@ -218,7 +255,22 @@ def build_plan(db, data, create=False):
                 raise ValueError("Weekly driving hours cannot be lower than this driver's previous planned order. Use Carry forward.")
         if provided.weekly_due > expected.weekly_due + timedelta(minutes=1):
             raise ValueError("Weekly rest is due earlier based on the previous order. Use Carry forward.")
+    route["notices"] += day_notices(stops, plan)
     return truck, driver, trailer, stops, pickup, clock_data, route, plan
+
+
+def day_notices(stops, plan):
+    """Plain warnings for the dispatcher: a stop moved to the next day (closed after 18:30 / Sunday), Saturday."""
+    notes = []
+    for stop, times in zip(stops, plan["stops"]):
+        start = parse_time(times["start_at"]).astimezone(ZONE)
+        what = f"{stop['kind'].lower()} in {stop['location']['city']}"
+        if times.get("next_day"):
+            notes.append(f"{what[0].upper() + what[1:]}: arrives {parse_time(times['arrival_at']).astimezone(ZONE):%a %d.%m %H:%M}, "
+                         f"after closing (18:30) or on Sunday → planned {start:%a %d.%m} at {start:%H:%M}.")
+        if stop["kind"] in WORK_KINDS and start.weekday() == 5:
+            notes.append(f"{what[0].upper() + what[1:]} is on Saturday {start:%d.%m}: few places work on Saturday, check with the company.")
+    return notes
 
 
 def trailer_spans(db):

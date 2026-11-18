@@ -424,6 +424,31 @@ class DispatchTests(unittest.TestCase):
         payload.update(extra)
         return payload
 
+    def test_unloading_after_closing_moves_to_next_working_morning(self):
+        from orders import build_plan
+        stop = lambda plan: plan["stops"][-1]
+        with connect(self.database) as db:
+            # Empty arrival: estimated. Mon 14:00 + 1 h loading + 5 h driving (with a break) = Mon 20:45 → Tue 08:00.
+            *_, route, plan = build_plan(db, self.manual_payload(pickup_at="2030-01-07T14:00", driving_hours=5, unloading_arrive_at=""))
+            self.assertEqual((stop(plan)["arrival_at"][:16], stop(plan)["start_at"][:16]), ("2030-01-07T20:45", "2030-01-08T08:00"))
+            self.assertTrue(stop(plan)["next_day"] and stop(plan)["estimated"])
+            self.assertTrue(any("after closing" in note for note in route["notices"]))
+            # A time typed by the dispatcher is kept, but the unloading is the next morning.
+            *_, plan = build_plan(db, self.manual_payload(unloading_arrive_at="2030-01-08T18:45"))
+            self.assertEqual(stop(plan)["start_at"][:16], "2030-01-09T08:00")
+            self.assertEqual(build_plan(db, self.manual_payload(unloading_arrive_at="2030-01-08T18:30"))[-1]["stops"][-1]["next_day"], False)
+            # Saturday evening and Sunday: Monday 08:00. Saturday morning stays, with a warning.
+            *_, plan = build_plan(db, self.manual_payload(pickup_at="2030-01-12T08:00", unloading_arrive_at="2030-01-12T19:00"))
+            self.assertEqual(stop(plan)["start_at"][:16], "2030-01-14T08:00")
+            *_, route, plan = build_plan(db, self.manual_payload(pickup_at="2030-01-12T08:00", unloading_arrive_at="2030-01-12T11:00"))
+            self.assertEqual(stop(plan)["start_at"][:16], "2030-01-12T11:00")
+            self.assertTrue(any("Saturday" in note for note in route["notices"]))
+            # Driving-rules estimate: the night wait at the closed place counts as the daily rest.
+            *_, plan = build_plan(db, {**self.payload, "pickup_at": "2030-01-07T14:00", "driving_hours": 5})
+            self.assertEqual(stop(plan)["start_at"][:16], "2030-01-08T08:00")
+            with self.assertRaises(ValueError):  # nothing to estimate from
+                build_plan(db, self.manual_payload(unloading_arrive_at=""))
+
     def test_next_trip_can_be_planned_before_delivery_with_empty_distance(self):
         # The form sends an empty distance and no driving hours when times are manual.
         form = lambda **extra: {**self.manual_payload(**extra),"distance_km":""}
