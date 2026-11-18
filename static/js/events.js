@@ -1,7 +1,7 @@
 'use strict';
 // Event handlers (click, submit, change, input), auto-refresh and start-up. Load last.
 // Click anywhere on a journey card (Daily planning, Fleet board) to open the journey details; links, fields and selected text keep working.
-function openCardJourney(event){const card=event.target.closest('.journey-row[data-order-id],.board-journey[data-order-id],.trailer-load[data-order-id]');if(!card||event.target.closest('a,input,select,textarea,label,summary,details'))return;if(String(window.getSelection?.()||'').trim())return;orderDetail(card.dataset.orderId);}
+function openCardJourney(event){const card=event.target.closest('.journey-row[data-order-id],.board-journey[data-order-id],.trailer-load[data-order-id],.today-row[data-order-id]');if(!card||event.target.closest('a,input,select,textarea,label,summary,details'))return;if(String(window.getSelection?.()||'').trim())return;orderDetail(card.dataset.orderId);}
 document.addEventListener('click',async event=>{const nav=event.target.closest('[data-view]');if(nav){navigate(nav.dataset.view);return;}const button=event.target.closest('[data-action]');if(!button){openCardJourney(event);return;}const action=button.dataset.action,id=button.dataset.id;const form=button.closest('form');try{
   if(action==='close'){$('#modal').close();return;}
   if(action==='refresh-upcoming'){await refresh();return;}
@@ -44,6 +44,10 @@ document.addEventListener('click',async event=>{const nav=event.target.closest('
   if(action==='map-exact'){await exactKm(closestAssemblies()||[]);return;}
   if(action==='map-order'){const r=(closestAssemblies()||[]).find(x=>x.t.id===Number(id));if(!r)return;const t=mapTarget();openOrder({truck_id:r.t.id,driver_id:r.driver?.id||r.t.driver_id,trailer_id:r.t.trailer_id||'',loading_id:t?.id||'',pickup_at:dispatchStamp(Math.max(r.arrive,mapSearch.at?Date.parse(mapSearch.at):0))});return;}
   if(action==='upcoming-mode'){upcomingMode=button.dataset.mode;render();return;}
+  if(action==='today-kind'){todayKind=button.dataset.kind;render();return;}
+  if(action==='geo-run'){runGeocoding().catch(error=>toast(error.message,true));return;}
+  if(action==='geo-stop'){if(geoRun)geoRun.running=false;return;}
+  if(action==='geo-accept'||action==='geo-accept-all'){const list=action==='geo-accept'?[geoRun.review[Number(button.dataset.index)]]:[...geoRun.review];button.disabled=true;for(const r of list){await saveCoordinates(r.p,r.m);geoRun.review.splice(geoRun.review.indexOf(r),1);geoRun.saved++;}await refresh();toast(`${list.length} ${list.length===1?'position':'positions'} saved.`);return;}
   if(action==='waiting-trailer-order'){openOrder({trailer_id:Number(id)});return;}
   if(action==='open-whatsapp'){await openWhatsapp(id,button.dataset.part||1);return;}
   if(action==='assign-tractor'){const box=button.closest('.relay-edit'),seq=Number(button.dataset.seq);const result=await api('/api/assign-tractor',{order_id:Number(id),seq,truck_id:box.querySelector('[data-search-select^="relay_truck_"] [data-search-hidden]').value||null,driver_id:box.querySelector('[data-relay-driver]').value||null});await refresh();orderDetail(id);toast(result.message);return;}

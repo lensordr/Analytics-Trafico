@@ -217,3 +217,22 @@
 
 /* Trailer view: next free window and the route actions */
 .trailer-next{display:flex;flex-direction:column;gap:2px;min-width:190px}.trailer-next span{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}.trailer-next .weekly-actions{margin-top:6px;display:flex;flex-wrap:wrap;gap:6px}
+
+/* ---- To do now */
+.todo-panel{padding-bottom:6px}.todo-panel.has-red{border-color:#e7b4ae}.todo-panel.all-clear h2{color:var(--green)}
+.todo-group{border-top:1px solid var(--line);padding:0 20px}.todo-group>summary{cursor:pointer;padding:11px 0;font-weight:650;list-style:none;display:flex;align-items:center;gap:8px}.todo-group>summary::-webkit-details-marker{display:none}
+.todo-dot{width:10px;height:10px;border-radius:50%;display:inline-block;background:#9aa5c7}.todo-dot.red{background:#c4372b}.todo-dot.amber{background:#d9921f}
+.todo-item{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:9px 12px;margin:0 0 8px;border-radius:8px;border-left:4px solid #9aa5c7;background:#f8faf8}.todo-item.red{border-left-color:#c4372b;background:#fdf3f2}.todo-item.amber{border-left-color:#d9921f;background:#fffaf1}
+.todo-what{display:flex;flex-direction:column;gap:3px;min-width:0}.todo-what strong{font-size:14px;font-weight:650}.todo-what small{color:var(--muted)}.todo-actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;flex-shrink:0}
+#nav-todo.overdue,#nav-data.soon{font-style:normal}
+@media (max-width:700px){.todo-item,.data-row{flex-direction:column;align-items:flex-start}.todo-actions{justify-content:flex-start}}
+/* ---- Today & tomorrow */
+.today-table{width:100%}.today-row{cursor:pointer}.today-row:hover{background:#f6f9f6}.today-row td{vertical-align:top}
+.today-row.late{background:#fdf3f2}.today-row.done{opacity:.62}.today-time strong{font-size:16px;display:block}
+.today-status{display:inline-block;margin-top:3px;font-size:11px;font-weight:650;padding:1px 7px;border-radius:9px;background:#eef1ee;color:#55615a}
+.today-status.late{background:#c4372b;color:#fff}.today-status.road{background:#e6eefc;color:#2a55a8}.today-status.done{background:#e3f3ea;color:var(--green)}
+.today-place strong,.today-vehicle strong{display:block;font-size:15px}.today-place small,.today-vehicle small{display:block;color:var(--muted)}
+.today-driver{white-space:nowrap}.today-driver .btn{margin-left:6px}.today-order .btn{margin-top:6px}
+/* ---- Data to complete */
+.data-list{padding:0 20px 14px}.data-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}.data-row small{display:block;color:var(--muted)}
+.geo-progress{margin:-6px 0 18px;padding:0 4px}.geo-bar{height:8px;background:#e6ebe6;border-radius:5px;overflow:hidden}.geo-bar span{display:block;height:100%;width:0;background:var(--green);transition:width .3s}
