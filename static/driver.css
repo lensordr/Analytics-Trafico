@@ -5,7 +5,7 @@ body.driver{margin:0;background:#f2f5f2;color:#142b21;font-family:system-ui,"Seg
 .driver header{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin-bottom:14px}
 .driver .order{font-weight:800;font-size:20px}
 .driver .vehicle{flex:1 1 auto;color:#3d5148}
-.driver .lang{font-size:15px;color:#12694b}
+.driver .lang{font-size:15px;color:#12694b;margin-left:10px}.driver .langs{white-space:nowrap}
 .driver .message{padding:14px 16px;border-radius:12px;margin-bottom:14px;font-weight:600}
 .driver .message.ok{background:#e3f4ea;color:#0d5236}
 .driver .message.warn{background:#fdecea;color:#8a1c12}

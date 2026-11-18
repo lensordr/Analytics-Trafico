@@ -22,7 +22,7 @@ TEXT = {
         "next": "Pasul următor", "finished": "✅ Cursa e finalizată. Mulțumim!",
         "cancelled": "Această cursă a fost anulată. Sună la birou.",
         "saved": "Mulțumim! Am primit confirmarea.", "missing": "Link invalid. Cere un link nou de la birou.",
-        "help": "Dacă ai apăsat greșit, sună la birou.", "other": "Español",
+        "help": "Dacă ai apăsat greșit, sună la birou.",
         "deca_title": "📄 DeCA (opțional)",
         "deca_intro": "Completează marfa, greutatea și DNI/NIE-ul tău pentru documentul de control. Poți sări peste: îl completează biroul.",
         "f_material": "Marfă (ex. chatarra, inox)", "f_weight": "Greutate încărcată (kg)", "f_dni": "DNI / NIE-ul tău",
@@ -44,7 +44,7 @@ TEXT = {
         "next": "Siguiente paso", "finished": "✅ Viaje terminado. ¡Gracias!",
         "cancelled": "Este viaje está cancelado. Llama a la oficina.",
         "saved": "¡Gracias! Hemos recibido la confirmación.", "missing": "Enlace no válido. Pide un enlace nuevo a la oficina.",
-        "help": "Si te has equivocado, llama a la oficina.", "other": "Română",
+        "help": "Si te has equivocado, llama a la oficina.",
         "deca_title": "📄 DeCA (opcional)",
         "deca_intro": "Rellena la mercancía, el peso y tu DNI/NIE para el documento de control. Puedes saltarlo: lo completa la oficina.",
         "f_material": "Mercancía (p. ej. chatarra, inox)", "f_weight": "Peso cargado (kg)", "f_dni": "Tu DNI / NIE",
@@ -53,8 +53,55 @@ TEXT = {
         "deca_office": "Datos guardados. La oficina completará el DeCA.",
         "bad_weight": "El peso debe estar entre 1 y 60000 kg.",
     },
+    "ru": {
+        "title": "Твой рейс", "truck": "Машина", "trailer": "Прицеп",
+        "Loading": "Загрузка", "Unloading": "Выгрузка", "Trailer swap": "Смена прицепа",
+        "extra_loading": "Дополнительная загрузка", "extra_unloading": "Частичная выгрузка",
+        "pickup": "Забираешь загруженный прицеп", "do_pickup": "✅ ПРИЦЕП ЗАБРАН",
+        "Tractor change": "Оставляешь прицеп (его забирает другая машина)", "do_Tractor change": "✅ ПРИЦЕП ОСТАВЛЕН",
+        "do_Loading": "✅ ЗАГРУЖЕНО", "do_Unloading": "✅ ВЫГРУЖЕНО", "do_Trailer swap": "✅ ПРИЦЕП ЗАМЕНЁН",
+        "sure": "Подтверждаешь?", "yes": "ДА, ПОДТВЕРЖДАЮ", "back": "Назад",
+        "planned": "По плану", "done": "Подтверждено", "map": "📍 Открыть в Google Maps",
+        "route": "🗺️ Полный маршрут", "material": "Груз", "leave": "Оставляешь", "take": "берёшь",
+        "next": "Следующий шаг", "finished": "✅ Рейс завершён. Спасибо!",
+        "cancelled": "Этот рейс отменён. Позвони в офис.",
+        "saved": "Спасибо! Подтверждение получено.", "missing": "Ссылка недействительна. Попроси новую ссылку в офисе.",
+        "help": "Если ошибся, позвони в офис.",
+        "deca_title": "📄 DeCA (необязательно)",
+        "deca_intro": "Укажи груз, вес и свой DNI/NIE для контрольного документа. Можно пропустить: его заполнит офис.",
+        "f_material": "Груз (напр. chatarra, inox)", "f_weight": "Загруженный вес (кг)", "f_dni": "Твой DNI / NIE",
+        "deca_save": "СОХРАНИТЬ И СДЕЛАТЬ DeCA", "deca_skip": "Позже", "deca_ready": "DeCA готов. Покажи его отсюда при проверке.",
+        "deca_open": "📄 Открыть DeCA", "deca_fill": "📄 Заполнить DeCA",
+        "deca_office": "Данные сохранены. DeCA заполнит офис.",
+        "bad_weight": "Вес должен быть от 1 до 60000 кг.",
+    },
+    "uk": {
+        "title": "Твій рейс", "truck": "Машина", "trailer": "Причіп",
+        "Loading": "Завантаження", "Unloading": "Розвантаження", "Trailer swap": "Заміна причепа",
+        "extra_loading": "Додаткове завантаження", "extra_unloading": "Часткове розвантаження",
+        "pickup": "Забираєш завантажений причіп", "do_pickup": "✅ ПРИЧІП ЗАБРАНО",
+        "Tractor change": "Залишаєш причіп (його забирає інша машина)", "do_Tractor change": "✅ ПРИЧІП ЗАЛИШЕНО",
+        "do_Loading": "✅ ЗАВАНТАЖЕНО", "do_Unloading": "✅ РОЗВАНТАЖЕНО", "do_Trailer swap": "✅ ПРИЧІП ЗАМІНЕНО",
+        "sure": "Підтверджуєш?", "yes": "ТАК, ПІДТВЕРДЖУЮ", "back": "Назад",
+        "planned": "За планом", "done": "Підтверджено", "map": "📍 Відкрити в Google Maps",
+        "route": "🗺️ Повний маршрут", "material": "Вантаж", "leave": "Залишаєш", "take": "береш",
+        "next": "Наступний крок", "finished": "✅ Рейс завершено. Дякуємо!",
+        "cancelled": "Цей рейс скасовано. Зателефонуй в офіс.",
+        "saved": "Дякуємо! Підтвердження отримано.", "missing": "Посилання недійсне. Попроси нове посилання в офісі.",
+        "help": "Якщо помилився, зателефонуй в офіс.",
+        "deca_title": "📄 DeCA (необов’язково)",
+        "deca_intro": "Вкажи вантаж, вагу і свій DNI/NIE для контрольного документа. Можна пропустити: його заповнить офіс.",
+        "f_material": "Вантаж (напр. chatarra, inox)", "f_weight": "Завантажена вага (кг)", "f_dni": "Твій DNI / NIE",
+        "deca_save": "ЗБЕРЕГТИ І ЗРОБИТИ DeCA", "deca_skip": "Пізніше", "deca_ready": "DeCA готовий. Покажи його звідси під час перевірки.",
+        "deca_open": "📄 Відкрити DeCA", "deca_fill": "📄 Заповнити DeCA",
+        "deca_office": "Дані збережено. DeCA заповнить офіс.",
+        "bad_weight": "Вага має бути від 1 до 60000 кг.",
+    },
 }
-DAYS = {"ro": ["lun", "mar", "mie", "joi", "vin", "sâm", "dum"], "es": ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]}
+DAYS = {"ro": ["lun", "mar", "mie", "joi", "vin", "sâm", "dum"], "es": ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"],
+        "ru": ["пн", "вт", "ср", "чт", "пт", "сб", "вс"], "uk": ["пн", "вт", "ср", "чт", "пт", "сб", "нд"]}
+# Short names for the language switch at the top of the driver page.
+LANG_NAMES = {"ro": "RO", "es": "ES", "ru": "RU", "uk": "UA"}
 
 
 def lang_of(value):
@@ -143,7 +190,9 @@ def render(token, order, stops, places, lang, confirm_seq=None, message="", erro
     head = (f'<header><div class="order">{escape(order["number"])}</div>'
             f'<div class="vehicle">{t["truck"]} <b>{escape(order["plate"])}</b>'
             + (f' · {t["trailer"]} <b>{escape(order["trailer"])}</b>' if order["trailer"] else "")
-            + f'</div><a class="lang" href="{base}?l={"es" if lang == "ro" else "ro"}">{t["other"]}</a></header>')
+            + '</div><div class="langs">' + " ".join(f'<a class="lang" href="{base}?l={code}">{name}</a>'
+                                                     for code, name in LANG_NAMES.items() if code != lang)
+            + '</div></header>')
     parts = [head]
     if message:
         parts.append(f'<div class="message ok">{escape(message)}</div>')

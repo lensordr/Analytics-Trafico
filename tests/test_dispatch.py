@@ -555,6 +555,11 @@ class DispatchTests(unittest.TestCase):
         self.assertIn("Recoges el remolque cargado",page)
         self.assertIn("HE COGIDO EL REMOLQUE",page)
         self.assertNotIn("HE CARGADO",page)
+        self.assertIn("Забираешь загруженный прицеп",driver.render(token,order,stops,places,"ru"))
+        ukrainian = driver.render(token,order,stops,places,"uk")
+        self.assertIn("ПРИЧІП ЗАБРАНО",ukrainian)
+        self.assertIn('?l=ru">RU</a>',ukrainian)
+        self.assertEqual(driver.lang_of("uk"),"uk")
 
     def test_delivery_confirmation_frees_truck_from_confirmed_time(self):
         with connect(self.database) as db:
