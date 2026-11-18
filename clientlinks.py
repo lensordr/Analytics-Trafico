@@ -37,7 +37,23 @@ def client_link(db, data):
         token = secrets.token_urlsafe(18)
         db.execute("UPDATE locations SET client_token=? WHERE id=?", (token, client["id"]))
     base = deca.settings(db)["public_url"]
-    return {"token": token, "url": f"{base}/c/{token}" if base else "", "routes": len(client_routes(db, client["id"]))}
+    routes = len(client_routes(db, client["id"]))
+    return {"token": token, "url": f"{base}/c/{token}" if base else "", "routes": routes,
+            "related": [] if routes else related_clients(db, client)}
+
+
+def related_clients(db, client):
+    """A place without routes of its own (e.g. a branch "Ferimet Sabadell"): the companies with a similar name that
+    do have routes as client (e.g. "FERIMET S.L."), so the dispatcher sends the right link."""
+    words = [w for w in re.findall(r"[a-z0-9]+", client["company"].casefold()) if len(w) >= 4]
+    if not words:
+        return []
+    found = []
+    for row in db.execute("SELECT l.id, l.company, l.city, count(t.id) AS routes FROM locations l JOIN tariffs t "
+                          "ON t.client_id=l.id AND t.active=1 WHERE l.id!=? GROUP BY l.id", (client["id"],)):
+        if words[0] in row["company"].casefold():
+            found.append({"id": row["id"], "company": row["company"], "city": row["city"], "routes": row["routes"]})
+    return sorted(found, key=lambda r: -r["routes"])[:5]
 
 
 def revoke_client_link(db, data):
@@ -55,22 +71,28 @@ def client_by_token(db, token):
 
 def _place(row, prefix):
     return {"id": row[f"{prefix}_id"], "company": row[f"{prefix}_company"], "city": row[f"{prefix}_city"],
-            "country": row[f"{prefix}_country"]}
+            "country": row[f"{prefix}_country"], "postal_code": row[f"{prefix}_postal"] or ""}
 
 
 def client_routes(db, client_id):
-    """The client's own active routes: [{tariff_id, from, to}] (no price, no notes)."""
+    """The client's own active routes: [{tariff_id, from, to, trips}] (no price, no notes). `trips`: orders already
+    done on the route (to suggest the usual ones first)."""
     result, seen = [], set()
+    trips = {}
+    for row in db.execute("SELECT loading_id, unloading_id, count(*) AS n FROM orders WHERE status!='Cancelled' "
+                          "AND (client_id=? OR client_id IS NULL) GROUP BY loading_id, unloading_id", (client_id,)):
+        trips[(row["loading_id"], row["unloading_id"])] = row["n"]
     for row in db.execute(
             "SELECT t.id, f.id AS from_id, f.company AS from_company, f.city AS from_city, f.country AS from_country, "
-            "d.id AS to_id, d.company AS to_company, d.city AS to_city, d.country AS to_country "
+            "f.postal_code AS from_postal, d.id AS to_id, d.company AS to_company, d.city AS to_city, "
+            "d.country AS to_country, d.postal_code AS to_postal "
             "FROM tariffs t JOIN locations f ON f.id=t.from_id JOIN locations d ON d.id=t.to_id "
             "WHERE t.client_id=? AND t.active=1 ORDER BY f.company, d.company, t.id", (client_id,)):
         key = (row["from_id"], row["to_id"])
         if key in seen:
             continue  # several tariffs on the same route: one choice for the client
         seen.add(key)
-        result.append({"tariff_id": row["id"], "from": _place(row, "from"), "to": _place(row, "to")})
+        result.append({"tariff_id": row["id"], "from": _place(row, "from"), "to": _place(row, "to"), "trips": trips.get(key, 0)})
     return result
 
 

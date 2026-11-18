@@ -1044,6 +1044,9 @@ class DispatchTests(unittest.TestCase):
             self.assertEqual(link["routes"],1)
             self.assertEqual(client_link(db,{"client_id":ferimet})["token"],link["token"])  # the same link every time
             self.assertEqual([(r["from"]["id"],r["to"]["id"]) for r in client_routes(db,ferimet)],[(self.a,self.b)])
+            # A branch without routes of its own points to the company that has them.
+            branch=app.save_master(db,"locations",{"company":"Ferimet Sabadell","city":"Sabadell","postal_code":"08202","country":"Spain","kind":"Client"})
+            self.assertEqual([r["id"] for r in client_link(db,{"client_id":branch})["related"]],[ferimet])
         server=app.ThreadingHTTPServer(("127.0.0.1",0),app.Handler)
         server.database=self.database
         thread=threading.Thread(target=server.serve_forever,daemon=True)

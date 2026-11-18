@@ -8,6 +8,8 @@ TEXT = {
         "title": "Solicitud de transporte", "hello": "Hola", "intro": "Indica qué necesitas cargar. Te confirmamos el camión lo antes posible.",
         "from": "Punto de carga", "to": "Punto de descarga", "choose": "Elige…", "other": "Otra dirección (escribir)",
         "other_help": "Empresa, dirección, población y código postal", "only_from": "Solo los destinos de esta carga",
+        "search": "Buscar: empresa, población o código postal", "no_match": "Ninguna coincidencia. Elige «Otra dirección».",
+        "usual": "Tus rutas habituales", "usual_help": "Toca una ruta para rellenar la carga y la descarga.",
         "load_date": "Día de carga", "load_time": "Hora o franja (opcional)", "load_time_ph": "p. ej. 08:00–12:00",
         "unload_by": "Descargar como tarde (opcional)", "trucks": "Número de camiones", "weight": "Peso aproximado",
         "weight_help": "24 t por defecto. Si es más o distinto, escríbelo (p. ej. 26 t, 2 × 24 t).",
@@ -30,6 +32,8 @@ TEXT = {
         "title": "Transport request", "hello": "Hello", "intro": "Tell us what you need to load. We confirm the truck as soon as possible.",
         "from": "Loading point", "to": "Unloading point", "choose": "Choose…", "other": "Other address (type it)",
         "other_help": "Company, address, town and postal code", "only_from": "Only the destinations of this loading",
+        "search": "Search: company, town or postal code", "no_match": "No match. Choose “Other address”.",
+        "usual": "Your usual routes", "usual_help": "Tap a route to fill in the loading and unloading.",
         "load_date": "Loading day", "load_time": "Time or time window (optional)", "load_time_ph": "e.g. 08:00–12:00",
         "unload_by": "Unload at the latest (optional)", "trucks": "Number of trucks", "weight": "Approximate weight",
         "weight_help": "24 t by default. If it is more or different, type it (e.g. 26 t, 2 × 24 t).",
@@ -87,7 +91,9 @@ def render(token, client, routes, requests, lang, today, message="", error="", f
         tos.setdefault(r["to"]["id"], {"place": r["to"], "from": set()})["from"].add(r["from"]["id"])
 
     def options(items, chosen):
-        return "".join(f'<option value="{pid}"{" selected" if str(pid) == chosen else ""}{extra}>{escape(_label(place))}</option>'
+        search = lambda p: escape(" ".join(str(p.get(k) or "") for k in ("company", "city", "postal_code", "country")))
+        return "".join(f'<option value="{pid}"{" selected" if str(pid) == chosen else ""}{extra} data-search="{search(place)}">'
+                       f'{escape(_label(place))}{" · " + escape(place["postal_code"]) if place.get("postal_code") else ""}</option>'
                        for pid, place, extra in items)
 
     from_items = [(pid, place, "") for pid, place in sorted(froms.items(), key=lambda kv: _label(kv[1]).casefold())]
@@ -97,9 +103,11 @@ def render(token, client, routes, requests, lang, today, message="", error="", f
 
     def place_field(key, label, items, chosen):
         other = chosen == "other" or not items
-        return (f'<label class="field"><span>{label}</span><select name="{key}" id="{key}" required>'
+        finder = (f'<div class="finder" data-for="{key}"><input type="search" placeholder="{t["search"]}" autocomplete="off" '
+                  f'aria-label="{t["search"]}"><div class="matches" hidden></div><p class="no-match" hidden>{t["no_match"]}</p></div>') if len(items) > 6 else ""
+        return (f'<div class="field"><span class="label">{label}</span>{finder}<select name="{key}" id="{key}" required aria-label="{label}">'
                 f'<option value="">{t["choose"]}</option>{options(items, chosen)}'
-                f'<option value="other"{" selected" if other else ""}>{t["other"]}</option></select></label>'
+                f'<option value="other"{" selected" if other else ""}>{t["other"]}</option></select></div>'
                 f'<label class="field other" data-other="{key}"{"" if other else " hidden"}><span>{t["other_help"]}</span>'
                 f'<textarea name="{key.replace("_id", "_other")}" rows="2">{value(key.replace("_id", "_other"))}</textarea></label>')
 
@@ -108,6 +116,12 @@ def render(token, client, routes, requests, lang, today, message="", error="", f
         f'<strong>{escape(_day(r["load_date"]))}</strong> · {r["trucks"]} {t["trucks_short"]}<br><small>{escape(r["route"])}</small>'
         + (f'<br><small class="reason">{escape(r["reason"])}</small>' if r["status"] == "Rejected" and r.get("reason") else "")
         + "</li>" for r in requests) or f'<li class="muted">{t["none"]}</li>'
+    usual = sorted((r for r in routes if r["trips"]), key=lambda r: -r["trips"])[:6]
+    usual_html = (f'<section class="card usual"><h2>{t["usual"]}</h2><p class="hint">{t["usual_help"]}</p>'
+                  + "".join(f'<button type="button" class="route-pick" data-from="{r["from"]["id"]}" data-to="{r["to"]["id"]}">'
+                            f'<strong>{escape(r["from"]["company"])}</strong> <small>{escape(r["from"]["city"])}</small>'
+                            f'<span>→</span><strong>{escape(r["to"]["company"])}</strong> <small>{escape(r["to"]["city"])}</small></button>'
+                            for r in usual) + '</section>') if usual else ""
     langs = " ".join(f'<a class="lang{" on" if code == lang else ""}" href="{base}?l={code}">{code.upper()}</a>' for code in TEXT)
     body = (
         f'<header><div><div class="brand">MalcomTrans</div><h1>{t["title"]}</h1></div><nav class="langs">{langs}</nav></header>'
@@ -115,7 +129,8 @@ def render(token, client, routes, requests, lang, today, message="", error="", f
         + (f'<p class="message ok">{escape(message)}</p>' if message else "")
         + (f'<p class="message warn">{escape(error)}</p>' if error else "")
         + ("" if routes else f'<p class="message info">{t["no_routes"]}</p>')
-        + f'<form method="post" action="{base}" class="card"><input type="hidden" name="l" value="{lang}">'
+        + usual_html
+        + f'<form method="post" action="{base}" class="card" id="request-form"><input type="hidden" name="l" value="{lang}">'
         + place_field("from_id", t["from"], from_items, chosen_from)
         + place_field("to_id", t["to"], to_items, chosen_to)
         + f'<p class="hint" id="to-hint" hidden>{t["only_from"]}</p>'
