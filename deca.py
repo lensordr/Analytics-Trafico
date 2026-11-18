@@ -14,7 +14,7 @@ from materials import material_label
 from planner import UTC, ZONE, parse_time, stamp
 import qr
 
-SETTINGS = {"carrier_name": "", "carrier_nif": "", "public_url": "", "home_base_id": ""}
+SETTINGS = {"carrier_name": "", "carrier_nif": "", "public_url": "", "home_base_id": "", "eur_km_good": "", "eur_km_low": ""}
 COUNTRY_ES = {"spain": "España", "france": "Francia", "italy": "Italia", "germany": "Alemania",
               "portugal": "Portugal", "netherlands": "Países Bajos", "belgium": "Bélgica",
               "luxembourg": "Luxemburgo", "poland": "Polonia", "slovakia": "Eslovaquia", "switzerland": "Suiza"}
@@ -38,13 +38,20 @@ def save_settings(db, data):
             raise ValueError("Company name and NIF: maximum 200 characters.")
         if key == "public_url" and value and not value.startswith("https://"):
             raise ValueError("The public address must start with https://")
+        if key in ("eur_km_good", "eur_km_low") and value:
+            try:
+                if not 0 < float(value.replace(",", ".")) <= 20:
+                    raise ValueError()
+            except ValueError:
+                raise ValueError("€/km thresholds: enter a number between 0 and 20 (e.g. 1.20).") from None
+            value = value.replace(",", ".")
         if key == "home_base_id" and value and not db.execute("SELECT 1 FROM locations WHERE id=?", (value,)).fetchone():
             raise ValueError("Home base: choose a saved location.")
         values[key] = value.upper().replace(" ", "") if key == "carrier_nif" else value.rstrip("/") if key == "public_url" else value
     for key, value in values.items():
         db.execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                    (key, value))
-    return {"message": "Company details saved.", "settings": values}
+    return {"message": "Settings saved.", "settings": values}
 
 
 def _row(db, sql, *args):

@@ -45,6 +45,10 @@ def make_xlsx(sheets):
 
 class DispatchTests(unittest.TestCase):
     def setUp(self):
+        # No live HERE calls from tests (the key file may exist on this computer).
+        here = patch.object(app.routing, "api_key", return_value="")
+        here.start()
+        self.addCleanup(here.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.database = Path(self.temp.name)/"test.sqlite3"
         initialize(self.database)
@@ -423,6 +427,20 @@ class DispatchTests(unittest.TestCase):
                    "unloading_arrive_at":"2030-01-08T15:00"}
         payload.update(extra)
         return payload
+
+    def test_empty_km_from_previous_unloading(self):
+        from orders import build_plan
+        with connect(self.database) as db:
+            first = app.create_order(db,self.manual_payload())  # A → B, free Tue 16:00 at B
+            # Next order loads at A again: empty B → A, estimated from the straight line (HERE is off in tests).
+            *_, route, _ = build_plan(db,self.manual_payload(pickup_at="2030-01-09T08:00",unloading_arrive_at="2030-01-09T15:00"))
+            empty = route["empty"]
+            self.assertEqual((empty["from_id"], empty["source"]), (self.b, "estimate"))
+            self.assertEqual(empty["after"], app.item(db,"orders",first)["number"])
+            self.assertEqual(empty["km"], round(app.routing.air_distance(app.item(db,"locations",self.b),app.item(db,"locations",self.a))*1.25,1))
+            # Before the first order: from the tractor's reported position (A), which is the loading point.
+            *_, route, _ = build_plan(db,self.manual_payload(pickup_at="2030-01-01T08:00",unloading_arrive_at="2030-01-01T15:00"))
+            self.assertEqual((route["empty"]["km"], route["empty"]["source"]), (0, "same place"))
 
     def test_unloading_after_closing_moves_to_next_working_morning(self):
         from orders import build_plan

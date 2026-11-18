@@ -75,3 +75,24 @@ function syncTariffBox(form,auto=true){const box=$('#tariff-box',form);if(!box)r
   box.innerHTML=!all.length?notice(`No tariff for this route yet. Enter the price below, or <button type="button" class="link-button" data-action="new-tariff-route">add a tariff for this route</button>.`):
     `<div class="tariff-choices">${all.map(t=>`<button type="button" class="geo-option ${String(t.id)===e.tariff_id.value?'chosen':''}" data-action="use-tariff" data-id="${t.id}"><strong>${String(t.id)===e.tariff_id.value?'✓ Tariff used':'Use this tariff →'} ${esc(companyName(t.client_id))}</strong><span>${esc(rateText(t.basis,t.rate))}</span><small>${t.price_date?'Price from '+esc(t.price_date):''}${t.km?' · '+km(t.km):''}</small></button>`).join('')}</div>`;
   updatePricePreview(form);}
+
+// ---------------------------------------------------------------- Empty km and €/km
+// Thresholds for the colour of €/km on all km (loaded + empty). Change them in Settings & backup.
+const EUR_KM_DEFAULT={good:1.2,low:0.9};
+function eurKmLimits(){const s=state.settings||{};return {good:Number(s.eur_km_good)||EUR_KM_DEFAULT.good,low:Number(s.eur_km_low)||EUR_KM_DEFAULT.low};}
+function eurKmClass(value){const l=eurKmLimits();return value==null?'':value>=l.good?'good':value>=l.low?'ok':'bad';}
+const eurKm=value=>value==null?'—':value.toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+' €/km';
+// Loaded km, empty km before the order and the price per km of an order (or of a preview: route + amount).
+function orderKm(route,amount){const loaded=Number(route?.distance_km)||0,empty=route?.empty&&route.empty.km!=null?Number(route.empty.km):null,total=loaded+(empty||0);
+  return {loaded,empty,total,emptyShare:empty!=null&&total?empty/total:null,perKm:amount!=null&&total?amount/total:null,perLoadedKm:amount!=null&&loaded?amount/loaded:null};}
+function kmEconomicsHtml(route,amount){const e=route?.empty,k=orderKm(route,amount);if(!e&&amount==null)return '';
+  const from=e?(e.km==null?`Empty km from ${esc(e.from)}: the location has no coordinates.`:`<strong>${km(e.km)}</strong> empty from ${esc(e.from_company||e.from)}${e.after?` (after ${esc(e.after)})`:''}${e.source==='estimate'?' · estimate':''}`):'Empty km unknown: the tractor has no previous order or reported position.';
+  return `<div class="km-economics"><div><span>Loaded</span><strong>${km(k.loaded)}</strong></div><div><span>Empty before</span><strong>${k.empty==null?'—':km(k.empty)}</strong>${k.emptyShare!=null?`<small>${Math.round(k.emptyShare*100)}% of the km</small>`:''}</div><div><span>€/km all km</span><strong class="eur-km ${eurKmClass(k.perKm)}">${eurKm(k.perKm)}</strong></div><div><span>€/km loaded</span><strong>${eurKm(k.perLoadedKm)}</strong></div><p>${from}</p></div>`;}
+// Price of the order being edited, as shown in the form (agreed total, else rate × weights).
+function formAmount(form){const e=form.elements;if(e.price_eur?.value!=='')return Number(e.price_eur.value);const w=formWeights(form);return priceFromWeights(e.rate_basis?.value,e.rate?.value,w.loads,w.unloads,w.final);}
+// Empty km before an order: saved when the order was created; older orders are estimated from the tractor's previous
+// part (straight line × 1.25 from where it ended to the loading point).
+function pointKm(a,b){if(!a||!b||a.lat==null||b.lat==null)return null;const r=Math.PI/180,dlat=(b.lat-a.lat)*r,dlon=(b.lon-a.lon)*r,h=Math.sin(dlat/2)**2+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dlon/2)**2;return 6371*2*Math.asin(Math.min(1,Math.sqrt(h)));}
+function orderEmptyKm(o){const saved=o.route_details?.empty;if(saved&&saved.km!=null)return Number(saved.km);const truck=o.truck_id,start=Date.parse(o.pickup_at);let best=null;
+  for(const x of state.orders){if(x.id===o.id||x.status==='Cancelled')continue;for(const p of orderParts(x))if(p.truck_id===truck&&Date.parse(p.end)<=start+60000&&(!best||Date.parse(p.end)>Date.parse(best.p.end)))best={x,p};}
+  const from=best?getLocation(orderStops(best.x).find(s=>s.seq===best.p.last)?.location_id):getLocation(state.trucks.find(t=>t.id===truck)?.location_id),air=pointKm(from,getLocation(orderStops(o)[0]?.location_id||o.loading_id));return air==null?null:Math.round(air*1.25*10)/10;}

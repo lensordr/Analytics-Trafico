@@ -229,6 +229,7 @@ def build_plan(db, data, create=False):
                        "driving_hours": b["leg_hours"]} for a, b in zip(stops, stops[1:])]}
     if mode == "here":
         route["profile"] = {key: truck[key] for key in ("height", "width", "length", "weight")}
+    route["empty"] = empty_leg(db, truck, pickup, stops[0]["location"], int(data.get("id") or 0))
     if order_timing(data) == "manual":
         estimate_arrivals(pickup, stops)
         plan = manual_plan(pickup, stops)
@@ -271,6 +272,42 @@ def day_notices(stops, plan):
         if stop["kind"] in WORK_KINDS and start.weekday() == 5:
             notes.append(f"{what[0].upper() + what[1:]} is on Saturday {start:%d.%m}: few places work on Saturday, check with the company.")
     return notes
+
+
+ROAD_FACTOR, EMPTY_SPEED = 1.25, 65  # road km ≈ air km × 1.25, at ~65 km/h, when HERE is not available
+
+
+def empty_leg(db, truck, pickup, destination, exclude=0):
+    """Km without load: from where the tractor is before this order (end of its previous part, else its reported
+    location) to the first stop. HERE truck route when configured, otherwise an estimate from the straight line."""
+    best = None
+    for order_id, (number, parts) in all_segments(db, exclude).items():
+        for index, (truck_id, _, _, end, _, last) in enumerate(parts):
+            if truck_id == truck["id"] and end <= pickup + timedelta(minutes=1) and (best is None or end > best[0]):
+                # all_segments knows only the tractor-change stops: the last part ends at the order's final stop.
+                best = (end, order_id, last if index < len(parts) - 1 else None, number)
+    if best:
+        row = db.execute("SELECT location_id FROM order_stops WHERE order_id=? AND (seq=? OR ? IS NULL) "
+                         "ORDER BY seq DESC LIMIT 1", (best[1], best[2], best[2])).fetchone()
+        origin, after = (item(db, "locations", row["location_id"]) if row else None), best[3]
+    else:
+        origin, after = (item(db, "locations", truck["location_id"]) if truck.get("location_id") else None), ""
+    if not origin:
+        return None
+    result = {"from_id": origin["id"], "from": origin["city"], "from_company": origin["company"], "after": after}
+    if origin["id"] == destination["id"]:
+        return {**result, "km": 0, "hours": 0, "source": "same place"}
+    air = routing.air_distance(origin, destination)
+    if air is None:
+        return {**result, "km": None, "hours": None, "source": "no coordinates"}
+    if routing.configured():
+        try:
+            leg = routing.truck_route(origin, destination, truck, "any")
+            return {**result, "km": leg["distance_km"], "hours": leg["driving_hours"], "source": "HERE truck"}
+        except ValueError:
+            pass
+    km = round(air * ROAD_FACTOR, 1)
+    return {**result, "km": km, "hours": round(km / EMPTY_SPEED, 2), "source": "estimate"}
 
 
 def trailer_spans(db):
