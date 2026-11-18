@@ -1032,6 +1032,70 @@ class DispatchTests(unittest.TestCase):
             server.server_close()
             thread.join()
 
+    def test_client_link_shows_only_own_routes_without_prices(self):
+        from clientlinks import client_link, client_routes, load_requests, set_request_status
+        with connect(self.database) as db:
+            ferimet=app.save_master(db,"locations",{"company":"FERIMET S.L.","city":"Barcelona","postal_code":"08001","country":"Spain","kind":"Client"})
+            other=app.save_master(db,"locations",{"company":"Other Client","city":"Bilbao","postal_code":"48001","country":"Spain","kind":"Client"})
+            secret=app.save_master(db,"locations",{"company":"Secret Destination","city":"Lyon","postal_code":"69001","country":"France"})
+            app.save_tariff(db,{"client_id":ferimet,"from_id":self.a,"to_id":self.b,"basis":"trip","rate":1777,"notes":"internal 1777 eur"})
+            app.save_tariff(db,{"client_id":other,"from_id":self.b,"to_id":secret,"basis":"trip","rate":999})
+            link=client_link(db,{"client_id":ferimet})
+            self.assertEqual(link["routes"],1)
+            self.assertEqual(client_link(db,{"client_id":ferimet})["token"],link["token"])  # the same link every time
+            self.assertEqual([(r["from"]["id"],r["to"]["id"]) for r in client_routes(db,ferimet)],[(self.a,self.b)])
+        server=app.ThreadingHTTPServer(("127.0.0.1",0),app.Handler)
+        server.database=self.database
+        thread=threading.Thread(target=server.serve_forever,daemon=True)
+        thread.start()
+        url=f"http://127.0.0.1:{server.server_port}/c/{link['token']}"
+        try:
+            with urlopen(url+"?l=es") as response:
+                page=response.read().decode()
+            self.assertIn("Warehouse A · Madrid",page)
+            self.assertIn("Warehouse B · Paris (France)",page)
+            self.assertIn('value="24 t"',page)
+            for hidden in ("Secret Destination","Other Client","1777","999","internal","€"):
+                self.assertNotIn(hidden,page)
+            with urlopen(url+"?l=en") as response:
+                self.assertIn("Transport request",response.read().decode())
+            with self.assertRaises(HTTPError) as err:
+                urlopen(f"http://127.0.0.1:{server.server_port}/c/{'x'*24}")
+            self.assertEqual(err.exception.code,404)
+            # Another client's place cannot be sent through this link.
+            form={"l":"es","from_id":str(self.b),"to_id":str(secret),"load_date":"2030-01-08","trucks":"1","weight":"24 t"}
+            with patch("clientlinks.datetime") as clock:
+                clock.now.return_value=parse_time("2030-01-07T09:00")
+                with self.assertRaises(HTTPError) as err:
+                    urlopen(Request(url,data=app.urlencode(form).encode()))
+                self.assertEqual(err.exception.code,400)
+                form.update(from_id=str(self.a),to_id=str(self.b),weight="26 t",reference="PO-77",trucks="2")
+                with urlopen(Request(url,data=app.urlencode(form).encode())) as response:
+                    self.assertIn("Solicitud enviada",response.read().decode())
+                form.update(to_id="other",to_other="Nueva Planta, Calle 1, Zaragoza 50001",trucks="1")
+                urlopen(Request(url,data=app.urlencode(form).encode())).read()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+        with connect(self.database) as db:
+            requests=load_requests(db,parse_time("2030-01-07T10:00"))
+            self.assertEqual(len(requests),2)
+            new_route,known=requests
+            self.assertEqual((known["from_id"],known["to_id"],known["weight"],known["trucks"]),(self.a,self.b,"26 t",2))
+            self.assertTrue(known["tariff_id"])
+            self.assertIsNone(new_route["to_id"])
+            self.assertIn("Zaragoza",new_route["to_text"])
+            # Orders created from the request are linked; with 2 trucks it is planned after the second order.
+            first=app.create_order(db,{**self.payload,"request_id":known["id"]})
+            app.link_order(db,known["id"],first)
+            self.assertEqual(load_requests(db,parse_time("2030-01-07T10:00"))[1]["status"],"New")
+            app.link_order(db,known["id"],first+1)
+            self.assertEqual(load_requests(db,parse_time("2030-01-07T10:00"))[1]["status"],"Planned")
+            set_request_status(db,{"id":new_route["id"],"status":"Rejected","reason":"No trucks that day"})
+            app.revoke_client_link(db,{"client_id":ferimet})
+            self.assertIsNone(app.client_by_token(db,link["token"]))
+
     def test_claude_connector_tools_read_the_planning(self):
         import assistant
         with connect(self.database) as db:

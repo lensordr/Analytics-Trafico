@@ -49,6 +49,15 @@ document.addEventListener('click',async event=>{const nav=event.target.closest('
   if(action==='suggest-tractor'){renderTractorSuggestions(form);return;}
   if(action==='close-suggest'){$('#tractor-suggest').innerHTML='';return;}
   if(action==='use-tractor'){setSearchSelectValue(form,'truck_id',id);form.elements.truck_id.dispatchEvent(new Event('change',{bubbles:true}));if(button.dataset.driver)form.elements.driver_id.value=button.dataset.driver;$('#tractor-suggest').innerHTML='';toast('Tractor chosen. Check the trailer and press Check times.');return;}
+  if(action==='nav-requests'){view='requests';requestFilter='New';render();return;}
+  if(action==='req-filter'){requestFilter=id;render();return;}
+  if(action==='req-order'){openRequestOrder(id);return;}
+  if(action==='req-status'){await api('/api/load-request',{id:Number(id),status:button.dataset.status});await refresh();toast(button.dataset.status==='New'?'Request open again.':'Request marked as planned.');return;}
+  if(action==='req-reject'){const r=loadRequests().find(x=>x.id===Number(id));const reason=prompt('Why can we not do it? The client sees this reason on their page (optional).','');if(reason===null)return;await api('/api/load-request',{id:Number(id),status:'Rejected',reason});await refresh();const href=r&&requestReplyHref(r,'no',reason.trim());if(href&&confirm('Rejected. Tell the client on WhatsApp too?'))window.open(href,'_blank','noopener');else toast('Request rejected.');return;}
+  if(action==='client-link'){await openClientLink(id);return;}
+  if(action==='client-link-renew'){if(!confirm('Make a new link? The old one stops working at once.'))return;await openClientLink(id,true);toast('New link ready. Send it to the client.');return;}
+  if(action==='client-link-revoke'){if(!confirm('Stop this link? The client can no longer send requests until you make a new one.'))return;await api('/api/client-link-revoke',{client_id:Number(id)});$('#modal').close();await refresh();toast('Link stopped.');return;}
+  if(action==='copy-client-link'){const input=$('#client-link-url');try{await navigator.clipboard.writeText(input.value);toast('Link copied.');}catch{input.select();toast('Select and copy the link.');}return;}
   if(action==='today-kind'){todayKind=button.dataset.kind;render();return;}
   if(action==='geo-run'){runGeocoding().catch(error=>toast(error.message,true));return;}
   if(action==='geo-stop'){if(geoRun)geoRun.running=false;return;}

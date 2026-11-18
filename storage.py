@@ -466,6 +466,21 @@ def initialize(target):
         # Delays reported by drivers from their link ("~2 h late", "tomorrow morning"): alerts for the office.
         db.execute("CREATE TABLE IF NOT EXISTS eta_reports (order_id INTEGER NOT NULL, seq INTEGER NOT NULL, "
                    "reported_at TEXT NOT NULL, delay TEXT NOT NULL, new_at TEXT NOT NULL, PRIMARY KEY (order_id, seq, reported_at))")
+        # Client order form: a secret link per client (/c/<token>) and the transport requests sent from it.
+        columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(locations)")}
+        if "client_token" not in columns:
+            db.execute("ALTER TABLE locations ADD COLUMN client_token TEXT")
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS locations_client_token ON locations(client_token)")
+        db.execute("""CREATE TABLE IF NOT EXISTS load_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER NOT NULL REFERENCES locations(id),
+            created_at TEXT NOT NULL, lang TEXT NOT NULL DEFAULT 'es', tariff_id INTEGER,
+            from_id INTEGER, to_id INTEGER, from_text TEXT NOT NULL DEFAULT '', to_text TEXT NOT NULL DEFAULT '',
+            load_date TEXT NOT NULL, load_time TEXT NOT NULL DEFAULT '', unload_by TEXT NOT NULL DEFAULT '',
+            trucks INTEGER NOT NULL DEFAULT 1, weight TEXT NOT NULL DEFAULT '', material TEXT NOT NULL DEFAULT '',
+            reference TEXT NOT NULL DEFAULT '', contact TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'New', reason TEXT NOT NULL DEFAULT '', order_ids TEXT NOT NULL DEFAULT '[]',
+            handled_at TEXT, handled_by TEXT NOT NULL DEFAULT '')""")
+        db.execute("CREATE INDEX IF NOT EXISTS load_requests_client ON load_requests(client_id, created_at)")
         # When each driver link was opened (first and last time): shows the dispatcher who read the trip.
         db.execute("CREATE TABLE IF NOT EXISTS link_opens (token TEXT PRIMARY KEY, first_at TEXT NOT NULL, "
                    "last_at TEXT NOT NULL, views INTEGER NOT NULL DEFAULT 1)")

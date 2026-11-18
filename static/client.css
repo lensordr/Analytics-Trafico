@@ -1,0 +1,23 @@
+/* Client order page: simple, readable on a phone, Spanish / English. */
+*{box-sizing:border-box}
+body.client{margin:0;background:#f2f5f2;color:#142b21;font-family:system-ui,"Segoe UI",Roboto,Arial,sans-serif;font-size:16px;line-height:1.45}
+.client main{max-width:620px;margin:0 auto;padding:16px 16px 48px}
+.client header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:6px}
+.client .brand{font-size:13px;font-weight:700;letter-spacing:.06em;color:#12694b;text-transform:uppercase}
+.client h1{margin:2px 0 0;font-size:24px}
+.client .langs{display:flex;gap:6px}.client .lang{color:#12694b;text-decoration:none;font-weight:700;border:1px solid #b9cfc3;border-radius:8px;padding:4px 9px;font-size:14px}.client .lang.on{background:#12694b;color:#fff;border-color:#12694b}
+.client .hello{color:#3d5148;margin:8px 0 14px}
+.client .card{background:#fff;border:1px solid #d6e0d9;border-radius:14px;padding:16px;margin-bottom:16px}
+.client .field{display:block;margin-bottom:14px}.client .field>span{display:block;font-weight:650;font-size:14px;margin-bottom:6px;color:#2c4136}
+.client input,.client select,.client textarea{width:100%;font:inherit;font-size:16px;padding:11px 12px;border:1px solid #c5d3ca;border-radius:10px;background:#fff;color:#142b21}
+.client input:focus,.client select:focus,.client textarea:focus{outline:2px solid #12694b33;border-color:#12694b}
+.client .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.client .hint{margin:-6px 0 14px;font-size:13px;color:#5e7066}
+.client .send{display:block;width:100%;border:0;border-radius:12px;padding:16px;font:inherit;font-size:18px;font-weight:800;color:#fff;background:#12694b;cursor:pointer}
+.client .message{padding:13px 15px;border-radius:12px;font-weight:600}.client .message.ok{background:#e3f4ea;color:#0d5236}.client .message.warn{background:#fdecea;color:#8a1c12}.client .message.info{background:#fff6e3;color:#7a5208}
+.client h2{font-size:17px;margin:0 0 10px}
+.client .history{list-style:none;margin:0;padding:0}.client .history li{padding:10px 0;border-top:1px solid #e3e9e5}.client .history li:first-child{border-top:0}
+.client .history small{color:#5e7066}.client .history .reason{color:#8a1c12}.client .muted{color:#5e7066}
+.client .badge{display:inline-block;font-size:12px;font-weight:700;border-radius:8px;padding:2px 8px;margin-right:8px}.client .badge.new{background:#eef1ee;color:#41544a}.client .badge.planned{background:#e3f4ea;color:#0d5236}.client .badge.rejected{background:#fdecea;color:#8a1c12}
+[hidden]{display:none!important}
+@media (max-width:480px){.client .row{grid-template-columns:1fr;gap:0}}

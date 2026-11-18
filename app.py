@@ -26,6 +26,7 @@ from nearby import *  # noqa: F401,F403
 from nextloads import *  # noqa: F401,F403
 from itv import *  # noqa: F401,F403
 from driverlinks import *  # noqa: F401,F403
+from clientlinks import *  # noqa: F401,F403
 from server import *  # noqa: F401,F403
 from server import Handler, ROOT, Server, TOKEN  # noqa: F401
 

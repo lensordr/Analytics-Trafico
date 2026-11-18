@@ -18,11 +18,13 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import assistant
 import autobackup
+import client
 import deca
 import driver
 import oauth
 import routing
 from auth import Auth
+from clientlinks import client_by_token, client_link, client_requests, client_routes, link_order, load_requests, revoke_client_link, set_request_status, submit_request
 from common import item, text
 from driverlinks import driver_deca, driver_link, driver_order, eta_reports, link_opens, mark_opened, report_delay
 from itv import delete_itv, import_itv, save_itv
@@ -32,7 +34,7 @@ from tariffs import delete_tariff, save_tariff
 from nearby import log_contact, nearby_companies
 from nextloads import next_loads
 from orders import assign_tractor, build_plan, carry_clock, create_order, set_stop_status, update_stop_eta, uses_rules
-from planner import UTC, parse_time, stamp
+from planner import UTC, ZONE, parse_time, stamp
 from storage import TursoReplica, backup_to, connect, rows
 from upcoming import weekly_availability
 
@@ -52,8 +54,8 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         # Driver links are secrets: never write them to the server log.
         message = format % args
-        if "/s/" in message or "/d/" in message:
-            message = re.sub(r"/([sd])/[^ ?\"]+", r"/\1/…", message)
+        if "/s/" in message or "/d/" in message or "/c/" in message:
+            message = re.sub(r"/([sdc])/[^ ?\"]+", r"/\1/…", message)
         sys.stderr.write(f"{self.address_string()} - - [{self.log_date_time_string()}] {message}\n")
 
     def send_body(self,status,body,content_type="application/json; charset=utf-8",headers=None):
@@ -211,6 +213,41 @@ class Handler(BaseHTTPRequestHandler):
     def signed_in(self):
         return self.auth.valid(self.headers.get("Cookie"))
 
+    # ---- client order page: the secret link identifies the client; only its own routes, no prices
+    def client_get(self, token, message="", error="", form=None, lang=None):
+        query = dict(parse_qsl(urlsplit(self.path).query))
+        lang = client.lang_of(lang or query.get("l"), self.headers.get("Accept-Language",""))
+        with connect(self.server.database) as db:
+            company = client_by_token(db, token)
+            if company is None:
+                return self.send_body(404, client.missing_page(lang), "text/html; charset=utf-8")
+            routes = client_routes(db, company["id"])
+            places = {row["id"]: row for row in db.execute("SELECT id, company, city FROM locations")}
+            history = client_requests(db, company["id"])
+        label = lambda pid, typed: f'{places[pid]["company"]} ({places[pid]["city"]})' if pid in places else " ".join(typed.split())[:60]
+        for request in history:
+            request["route"] = f'{label(request["from_id"], request["from_text"])} → {label(request["to_id"], request["to_text"])}'
+        if query.get("ok") and not message and not error:
+            message = client.TEXT[lang]["sent"]
+        today = datetime.now(UTC).astimezone(ZONE).date().isoformat()
+        self.send_body(200 if not error else 400, client.render(token, company, routes, history, lang, today, message, error, form),
+                       "text/html; charset=utf-8", {"X-Robots-Tag": "noindex"})
+
+    def client_post(self, token):
+        length = int(self.headers.get("Content-Length","0") or 0)
+        form = dict(parse_qsl(self.rfile.read(length).decode("utf-8","replace"))) if 0 < length < 8000 else {}
+        lang = client.lang_of(form.get("l"))
+        with connect(self.server.database, fresh=True) as db:
+            company = client_by_token(db, token)
+            if company is None:
+                return self.send_body(404, client.missing_page(lang), "text/html; charset=utf-8")
+            try:
+                submit_request(db, company, form)
+            except ValueError as error:
+                key = str(error)
+                return self.client_get(token, error=client.TEXT[lang]["errors"].get(key, key), form=form, lang=lang)
+        return self.redirect(f"/c/{token}?l={lang}&ok=1")
+
     # ---- Claude connector (MCP): OAuth sign-in with the dispatcher's password, then read-only tools at /mcp
     def base_url(self):
         return f"{'https' if self.https() else 'http'}://{self.headers.get('Host')}"
@@ -343,6 +380,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.redirect("/login",self.auth.clear_cookie())
         if path.startswith("/s/"):
             return self.driver_get(path[3:])
+        if path.startswith("/c/"):
+            return self.client_get(path[3:])
         if path in CONNECTOR_GET:
             return self.connector_get(path)
         if path.startswith("/d/"):
@@ -361,7 +400,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("X-Robots-Tag", "noindex")
             self.end_headers()
             return self.wfile.write(body)
-        if path not in ("/style.css","/driver.css") and not self.signed_in():
+        if path not in ("/style.css","/driver.css","/client.css","/client.js") and not self.signed_in():
             return self.send_body(401,{"error":"Please sign in again."}) if path.startswith("/api/") else self.redirect("/login")
         tile = re.fullmatch(r"/tiles/(\d{1,2})/(\d{1,7})/(\d{1,7})\.png", path)
         if tile:
@@ -379,6 +418,7 @@ class Handler(BaseHTTPRequestHandler):
                 state["settings"] = deca.settings(db)
                 state["link_opens"] = link_opens(db)
                 state["eta_reports"] = eta_reports(db)
+                state["load_requests"] = load_requests(db)
             folder = getattr(self.server,"backup_folder",None)
             newest = autobackup.latest(folder) if folder else None
             state["auto_backup"] = {"enabled": bool(folder), "latest": stamp(datetime.fromtimestamp(newest.stat().st_mtime,UTC)) if newest else None,
@@ -423,7 +463,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control","no-store")
             self.end_headers()
             return self.wfile.write(body)
-        files = {"/":("index.html","text/html; charset=utf-8"),"/analytics.js":("analytics.js","text/javascript; charset=utf-8"),"/search-select.js":("search-select.js","text/javascript; charset=utf-8"),"/style.css":("style.css","text/css; charset=utf-8"),"/driver.css":("driver.css","text/css; charset=utf-8")}
+        files = {"/":("index.html","text/html; charset=utf-8"),"/analytics.js":("analytics.js","text/javascript; charset=utf-8"),"/search-select.js":("search-select.js","text/javascript; charset=utf-8"),"/style.css":("style.css","text/css; charset=utf-8"),"/driver.css":("driver.css","text/css; charset=utf-8"),"/client.css":("client.css","text/css; charset=utf-8"),"/client.js":("client.js","text/javascript; charset=utf-8")}
         # Interface modules: static/js/<name>.js (names checked, so no other file can be read).
         if re.fullmatch(r"/js/[a-z][a-z-]*\.js", path) and (ROOT/"static"/path.lstrip("/")).is_file():
             return self.send_body(200,(ROOT/"static"/path.lstrip("/")).read_bytes(),"text/javascript; charset=utf-8")
@@ -437,6 +477,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.handle_login()
         if self.valid_host() and urlsplit(self.path).path.startswith("/s/"):
             return self.driver_post(urlsplit(self.path).path[3:])
+        if self.valid_host() and urlsplit(self.path).path.startswith("/c/"):
+            return self.client_post(urlsplit(self.path).path[3:])
         if self.valid_host() and urlsplit(self.path).path in CONNECTOR_POST:
             return self.connector_post(urlsplit(self.path).path)
         if self.valid_host() and not self.signed_in():
@@ -464,6 +506,14 @@ class Handler(BaseHTTPRequestHandler):
                     result = {"route":route,"plan":plan}
                 elif path == "/api/orders":
                     result = {"id":create_order(db,data)}
+                    if data.get("request_id"):  # created from a client request: link them
+                        link_order(db,data["request_id"],result["id"],self.auth.user(self.headers.get("Cookie")) or "")
+                elif path == "/api/client-link":
+                    result = client_link(db,data)
+                elif path == "/api/client-link-revoke":
+                    result = revoke_client_link(db,data)
+                elif path == "/api/load-request":
+                    result = set_request_status(db,data,self.auth.user(self.headers.get("Cookie")) or "")
                 elif path == "/api/order-status":
                     order = item(db,"orders",data.get("id"))
                     status = data.get("status")

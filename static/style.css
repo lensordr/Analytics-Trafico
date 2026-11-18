@@ -259,3 +259,14 @@
 @media (max-width:700px){.suggest-row{grid-template-columns:1fr 1fr}}
 /* ---- Driver link status */
 .link-status{display:inline-block;font-size:12px;padding:2px 8px;border-radius:10px;margin:0 8px 0 -2px;align-self:center}.link-status.opened{background:#e3f3ea;color:var(--green)}.link-status.waiting{background:#fff4df;color:#a86116}.link-status.none{background:#eef1ee;color:#55615a}
+
+/* ---- Client requests */
+#nav-requests{background:#d97706;color:#fff}
+.req-list{padding:16px 20px;display:grid;gap:14px}.req-card{border:1px solid var(--line);border-radius:9px;padding:14px 16px;background:#fff}.req-card.new{box-shadow:inset 4px 0 0 #d97706}.req-card.rejected{opacity:.75}
+.req-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:10px}.req-head strong{font-size:14px}.req-head small{display:block;color:var(--muted);font-size:11px;margin-top:3px}.req-head .badge{margin-left:6px}
+.req-route{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;background:#f6f9f6;border-radius:7px;padding:10px 12px}.req-route span,.req-facts span,.req-suggest>span{display:block;font-size:9px;letter-spacing:.5px;text-transform:uppercase;color:#7f9174;margin-bottom:3px}.req-route strong{font-size:12px}.req-route small{display:block;white-space:pre-wrap;color:#5d6b60;font-size:11px;margin-top:3px}.req-arrow{font-size:18px;color:#7f9174}
+.req-facts{display:flex;flex-wrap:wrap;gap:10px 22px;margin:12px 0 4px;font-size:12px}.req-notes{white-space:pre-wrap;font-size:12px;background:#fffaf0;border-radius:6px;padding:8px 10px;margin:8px 0}
+.req-orders{font-size:12px;margin:8px 0}.req-suggest{font-size:12px;margin:10px 0;border-top:1px dashed var(--line);padding-top:8px}.req-suggest div{padding:2px 0}.req-suggest .late{color:#9d7026}
+.req-card .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.client-link-actions{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 14px}
+@media (max-width:700px){.req-route{grid-template-columns:1fr}.req-arrow{display:none}}
+.panel-head .view-toggle button{white-space:nowrap}
