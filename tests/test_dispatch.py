@@ -428,6 +428,21 @@ class DispatchTests(unittest.TestCase):
         payload.update(extra)
         return payload
 
+    def test_driver_link_open_is_recorded_once_per_ten_minutes(self):
+        from driverlinks import link_opens, mark_opened
+        with connect(self.database) as db:
+            order = app.create_order(db,self.manual_payload())
+            token = app.driver_link(db,{"order_id":order})["token"]
+        with connect(self.database) as db:
+            self.assertEqual(link_opens(db),{})
+            mark_opened(db,token)
+        with connect(self.database) as db:
+            mark_opened(db,token)  # again right away: not written
+        with connect(self.database) as db:
+            opens = link_opens(db)
+        self.assertEqual(opens[token]["views"],1)
+        self.assertEqual(opens[token]["first_at"],opens[token]["last_at"])
+
     def test_empty_km_from_previous_unloading(self):
         from orders import build_plan
         with connect(self.database) as db:

@@ -1,7 +1,7 @@
 'use strict';
 // Event handlers (click, submit, change, input), auto-refresh and start-up. Load last.
 // Click anywhere on a journey card (Daily planning, Fleet board) to open the journey details; links, fields and selected text keep working.
-function openCardJourney(event){const card=event.target.closest('.journey-row[data-order-id],.board-journey[data-order-id],.trailer-load[data-order-id],.today-row[data-order-id]');if(!card||event.target.closest('a,input,select,textarea,label,summary,details'))return;if(String(window.getSelection?.()||'').trim())return;orderDetail(card.dataset.orderId);}
+function openCardJourney(event){const card=event.target.closest('.journey-row[data-order-id],.board-journey[data-order-id],.trailer-load[data-order-id],.today-row[data-order-id],.tl-block[data-order-id]');if(!card||event.target.closest('a,input,select,textarea,label,summary,details'))return;if(String(window.getSelection?.()||'').trim())return;orderDetail(card.dataset.orderId);}
 document.addEventListener('click',async event=>{const nav=event.target.closest('[data-view]');if(nav){navigate(nav.dataset.view);return;}const button=event.target.closest('[data-action]');if(!button){openCardJourney(event);return;}const action=button.dataset.action,id=button.dataset.id;const form=button.closest('form');try{
   if(action==='close'){$('#modal').close();return;}
   if(action==='refresh-upcoming'){await refresh();return;}
@@ -44,6 +44,11 @@ document.addEventListener('click',async event=>{const nav=event.target.closest('
   if(action==='map-exact'){await exactKm(closestAssemblies()||[]);return;}
   if(action==='map-order'){const r=(closestAssemblies()||[]).find(x=>x.t.id===Number(id));if(!r)return;const t=mapTarget();openOrder({truck_id:r.t.id,driver_id:r.driver?.id||r.t.driver_id,trailer_id:r.t.trailer_id||'',loading_id:t?.id||'',pickup_at:dispatchStamp(Math.max(r.arrive,mapSearch.at?Date.parse(mapSearch.at):0))});return;}
   if(action==='upcoming-mode'){upcomingMode=button.dataset.mode;render();return;}
+  if(action==='tl-move'){tlStart=addDays(tlRange().day,Number(button.dataset.step)*tlDays);render();return;}
+  if(action==='tl-today'){tlStart=null;render();return;}
+  if(action==='suggest-tractor'){renderTractorSuggestions(form);return;}
+  if(action==='close-suggest'){$('#tractor-suggest').innerHTML='';return;}
+  if(action==='use-tractor'){setSearchSelectValue(form,'truck_id',id);form.elements.truck_id.dispatchEvent(new Event('change',{bubbles:true}));if(button.dataset.driver)form.elements.driver_id.value=button.dataset.driver;$('#tractor-suggest').innerHTML='';toast('Tractor chosen. Check the trailer and press Check times.');return;}
   if(action==='today-kind'){todayKind=button.dataset.kind;render();return;}
   if(action==='geo-run'){runGeocoding().catch(error=>toast(error.message,true));return;}
   if(action==='geo-stop'){if(geoRun)geoRun.running=false;return;}
@@ -84,6 +89,8 @@ document.addEventListener('submit',async event=>{event.preventDefault();const fo
   if(form.getAttribute('id')==='archive-form'){const data=formObject(form);const result=await api('/api/archive',{kind:form.dataset.type,id:Number(form.dataset.id),reason:data.reason,note:data.note||''});$('#modal').close();await refresh();toast(`${result.archived} deleted (${data.reason}). History is kept; restore it from Show archived.`);}
 }catch(error){showError(form,error);}finally{if(button)button.disabled=false;}});
 document.addEventListener('change',event=>{const input=event.target;
+  if(input.id==='tl-date'&&input.value){tlStart=input.value;render();return;}
+  if(input.id==='tl-days'){tlDays=Number(input.value)||3;render();return;}
   if(input.id==='f-wa-lang'){const form=$('#wa-form');setWaLang(input.value,Number(form.dataset.driver)||0);const o=state.orders.find(x=>x.id===Number(form.dataset.order));form.elements.text.value=whatsappText(o,waLang,form.dataset.link,form.dataset.part);syncWhatsapp();return;}
   if(input.id==='itv-kind'||input.id==='itv-status'){itvFilter[input.id==='itv-kind'?'kind':'status']=input.value;render();return;}
   if(input.id==='itv-file'&&input.files?.[0]){const file=input.files[0];input.value='';(async()=>{try{if(file.size>2000000)throw new Error('The Excel file is too large (max 2 MB).');itvImportFile=await readFileBase64(file);itvImportModal(await api('/api/itv-import',{file:itvImportFile}));}catch(error){itvImportFile=null;toast(error.message,true);}})();return;}

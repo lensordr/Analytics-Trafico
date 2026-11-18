@@ -463,6 +463,9 @@ def initialize(target):
         if "driver_token" not in columns:
             db.execute("ALTER TABLE orders ADD COLUMN driver_token TEXT")
         db.execute("CREATE UNIQUE INDEX IF NOT EXISTS orders_driver_token ON orders(driver_token)")
+        # When each driver link was opened (first and last time): shows the dispatcher who read the trip.
+        db.execute("CREATE TABLE IF NOT EXISTS link_opens (token TEXT PRIMARY KEY, first_at TEXT NOT NULL, "
+                   "last_at TEXT NOT NULL, views INTEGER NOT NULL DEFAULT 1)")
         # Existing two-stop orders become a loading stop and an unloading stop (once).
         db.execute("""INSERT INTO order_stops (order_id, seq, kind, location_id, planned_at, planned_end_at,
                 handling_hours, status, done_at)

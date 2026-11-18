@@ -7,7 +7,8 @@ import secrets
 import deca
 from common import item
 from orders import order_stop_rows, tractor_segments
-from planner import UTC, parse_time
+from planner import UTC, parse_time, stamp
+from storage import begin_write
 
 LINK_DAYS_AFTER_END = 7
 
@@ -104,3 +105,24 @@ def driver_order(db, token):
                      part_first=first, part_last=last)
     places = {stop["location_id"]: item(db, "locations", stop["location_id"]) for stop in stops}
     return order, stops, places
+
+
+OPEN_RECORD_MINUTES = 10  # repeated views within this time are not written again
+
+
+def mark_opened(db, token):
+    """Record that the driver opened the link (first time, and the last time at most every 10 minutes)."""
+    now = datetime.now(UTC)
+    row = db.execute("SELECT last_at FROM link_opens WHERE token=?", (token,)).fetchone()
+    if row and parse_time(row["last_at"]) > now - timedelta(minutes=OPEN_RECORD_MINUTES):
+        return
+    begin_write(db)
+    if row:
+        db.execute("UPDATE link_opens SET last_at=?, views=views+1 WHERE token=?", (stamp(now), token))
+    else:
+        db.execute("INSERT INTO link_opens (token, first_at, last_at) VALUES (?,?,?)", (token, stamp(now), stamp(now)))
+
+
+def link_opens(db):
+    return {row["token"]: {"first_at": row["first_at"], "last_at": row["last_at"], "views": row["views"]}
+            for row in db.execute("SELECT * FROM link_opens")}

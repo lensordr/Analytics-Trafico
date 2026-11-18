@@ -21,7 +21,7 @@ import driver
 import routing
 from auth import Auth
 from common import item, text
-from driverlinks import driver_deca, driver_link, driver_order
+from driverlinks import driver_deca, driver_link, driver_order, link_opens, mark_opened
 from itv import delete_itv, import_itv, save_itv
 from masters import archive_master, restore_master, save_master
 from materials import delete_material, save_material
@@ -140,6 +140,11 @@ class Handler(BaseHTTPRequestHandler):
             order, stops, places = driver_order(db, token)
         if order is None:
             return self.send_body(404, driver.missing_page(lang), "text/html; charset=utf-8")
+        try:
+            with connect(self.server.database) as db:
+                mark_opened(db, token)
+        except Exception:
+            pass  # the page must open even if the view cannot be recorded
         if query.get("ok") and not message and not error:
             message = driver.TEXT[lang]["saved"]
         confirm = int(query["c"]) if query.get("c", "").isdigit() else None
@@ -237,6 +242,7 @@ class Handler(BaseHTTPRequestHandler):
                 state["materials"] = rows(db,"materials")
                 state["tariffs"] = rows(db,"tariffs")
                 state["settings"] = deca.settings(db)
+                state["link_opens"] = link_opens(db)
             folder = getattr(self.server,"backup_folder",None)
             newest = autobackup.latest(folder) if folder else None
             state["auto_backup"] = {"enabled": bool(folder), "latest": stamp(datetime.fromtimestamp(newest.stat().st_mtime,UTC)) if newest else None,

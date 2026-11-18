@@ -241,3 +241,21 @@
 .km-economics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:12px 14px;margin-bottom:12px;border-radius:8px;background:#f4f7f4;border:1px solid var(--line)}.km-economics span{display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}.km-economics strong{font-size:17px}.km-economics small{display:block;color:var(--muted)}.km-economics p{grid-column:1/-1;margin:0;font-size:13px;color:var(--muted)}.km-economics p strong{font-size:inherit}
 .eur-km.good{color:#12694b}.eur-km.ok{color:#a86116}.eur-km.bad{color:#c4372b}
 @media (max-width:700px){.km-economics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* ---- Timeline */
+.tl-panel{overflow-x:auto}.tl-grid{min-width:900px}.tl-head,.tl-row{display:grid;grid-template-columns:150px 1fr;border-bottom:1px solid var(--line)}
+.tl-head{position:sticky;top:0;background:#fff;z-index:2}.tl-label{padding:8px 12px;border-right:1px solid var(--line)}.tl-label small{display:block;color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tl-track{position:relative;display:flex;min-height:44px}.tl-day{flex:1;display:grid;grid-template-columns:repeat(4,1fr);border-left:1px solid #cfd8cf;padding:6px 0 4px;font-size:11px;color:var(--muted)}.tl-day strong{grid-column:1/-1;padding-left:6px;color:var(--dark)}.tl-day span{border-left:1px dashed #e3e8e3;padding-left:3px}.tl-day span:first-of-type{border-left:0;grid-column:2}.tl-day.today strong{color:var(--green)}
+.tl-cell{flex:1;border-left:1px solid #e1e7e1;background:repeating-linear-gradient(90deg,transparent 0,transparent calc(25% - 1px),#f1f4f1 calc(25% - 1px),#f1f4f1 25%)}
+.tl-block{position:absolute;top:8px;height:28px;border-radius:5px;overflow:hidden;font-size:11px;line-height:28px;padding:0 5px;white-space:nowrap;cursor:pointer;color:#fff;box-sizing:border-box}.tl-block span{pointer-events:none}
+.tl-block.road{background:#3d78c9}.tl-block.loading{background:#12694b}.tl-block.unloading{background:#a86116}.tl-block.swap{background:#6b4fa8}.tl-block.wait{background:#c7c3e8;color:#3b3f9e}
+.tl-block.empty{background:repeating-linear-gradient(45deg,#f6d9a8 0,#f6d9a8 6px,#f1c98a 6px,#f1c98a 12px);color:#7a4a08}.tl-block.free{background:#eef1ee;color:#55615a;border:1px dashed #b9c4b9}.tl-block.free.clickable:hover{background:#e0ece4;border-color:var(--green);color:var(--green)}.tl-block.free.unknown{opacity:.6}
+.tl-block.done{opacity:.55}.tl-block.late{box-shadow:0 0 0 2px #c4372b inset}.tl-now{position:absolute;top:0;bottom:0;width:2px;background:#c4372b;z-index:1}
+.tl-legend-item{display:inline-flex;align-items:center;gap:5px;margin-right:12px;font-size:12px}.tl-legend-item i.tl-block{position:static;display:inline-block;width:18px;height:12px;line-height:12px;padding:0}
+/* ---- Suggest tractor */
+.suggest-wrap{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.suggest-wrap>small{color:var(--muted)}#tractor-suggest{flex-basis:100%}
+.suggest-box{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:#f8faf8}.suggest-head{display:flex;justify-content:space-between;margin-bottom:6px}
+.suggest-row{display:grid;grid-template-columns:1.1fr 1.3fr 1.5fr auto;gap:10px;align-items:center;padding:7px 0;border-top:1px solid var(--line)}.suggest-row small{display:block;color:var(--muted)}.suggest-row.late{opacity:.75}
+@media (max-width:700px){.suggest-row{grid-template-columns:1fr 1fr}}
+/* ---- Driver link status */
+.link-status{display:inline-block;font-size:12px;padding:2px 8px;border-radius:10px;margin:0 8px 0 -2px;align-self:center}.link-status.opened{background:#e3f3ea;color:var(--green)}.link-status.waiting{background:#fff4df;color:#a86116}.link-status.none{background:#eef1ee;color:#55615a}
