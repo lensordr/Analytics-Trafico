@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from common import item, text
+from names import proper_name
 from planner import UTC, number, parse_time, stamp
 from storage import reserve_id
 
@@ -73,6 +74,8 @@ def save_master(db, kind, data):
                                    else stamp(datetime.now(UTC).replace(second=0, microsecond=0))) if parked else None
     elif kind == "locations":
         values = {key: text(data, key, key != "address") for key in ("company", "city", "postal_code", "country", "address")}
+        if not data.get("id"):  # a new place: "FERIMET S.L" is saved as "Ferimet S.L."
+            values["company"], values["city"] = proper_name(values["company"], True), proper_name(values["city"], False)
         values.update(lat=None, lon=None, geo_label=text(data, "geo_label", False, 400))
         # Profile fields: an older open form may not send them, so keep what is saved.
         saved = item(db, "locations", data["id"]) if data.get("id") else {}
