@@ -428,6 +428,32 @@ class DispatchTests(unittest.TestCase):
         payload.update(extra)
         return payload
 
+    def test_driver_reports_delay_from_link(self):
+        import driver
+        from driverlinks import driver_order, eta_reports, report_delay
+        from datetime import datetime, timezone
+        now = datetime(2030,1,8,9,0,tzinfo=timezone.utc)  # Tue 10:00 Madrid; unloading planned Tue 15:00
+        with connect(self.database) as db:
+            order = app.create_order(db,self.manual_payload())
+            app.set_stop_status(db,{"order_id":order,"seq":1,"done_at":"2030-01-07T08:30"})
+            token = app.driver_link(db,{"order_id":order})["token"]
+        def report(delay):
+            with connect(self.database) as db:
+                o, stops, _ = driver_order(db,token)
+                return report_delay(db,o,[s for s in stops if s["status"]!="Done"][0],delay,now)
+        report("2")
+        with connect(self.database) as db:
+            self.assertEqual(db.execute("SELECT planned_at FROM order_stops WHERE order_id=? AND seq=2",(order,)).fetchone()["planned_at"][:16],"2030-01-08T17:00")
+        report("4")  # 17:00 + 4 h = 21:00, after closing → Wednesday 08:00
+        with connect(self.database) as db:
+            self.assertEqual(db.execute("SELECT planned_at FROM order_stops WHERE order_id=? AND seq=2",(order,)).fetchone()["planned_at"][:16],"2030-01-09T08:00")
+            # Two taps in the same minute: one report per stop and minute, the last one wins.
+            self.assertEqual([r["delay"] for r in eta_reports(db,now)],["4"])
+            o, stops, places = driver_order(db,token)
+        self.assertIn("Запізнюєшся",driver.render(token,o,stops,places,"uk"))
+        with self.assertRaises(ValueError):
+            report("99")
+
     def test_driver_link_open_is_recorded_once_per_ten_minutes(self):
         from driverlinks import link_opens, mark_opened
         with connect(self.database) as db:

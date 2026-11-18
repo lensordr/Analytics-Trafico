@@ -37,3 +37,6 @@ body.driver{margin:0;background:#f2f5f2;color:#142b21;font-family:system-ui,"Seg
 .driver .deca input{display:block;width:100%;margin-top:4px;padding:14px;font-size:20px;border:1px solid #b9c6bd;border-radius:10px;font-family:inherit}
 .driver .deca .action{background:#174ea6}
 .driver .deca-link{margin:0 0 18px}
+
+.driver details.late{margin-top:14px;border:2px solid #e6c48a;border-radius:14px;padding:4px 12px;background:#fffaf0}.driver details.late summary{font-size:19px;font-weight:700;padding:10px 0;cursor:pointer;color:#8a5208}
+.driver details.late p{margin:4px 0 10px;color:#5d5d5d}.driver .late-option{display:block;width:100%;margin:0 0 10px;padding:16px;border:0;border-radius:12px;background:#a86116;color:#fff;font-size:19px;font-weight:700;font-family:inherit;cursor:pointer}

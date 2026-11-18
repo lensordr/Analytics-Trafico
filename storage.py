@@ -463,6 +463,9 @@ def initialize(target):
         if "driver_token" not in columns:
             db.execute("ALTER TABLE orders ADD COLUMN driver_token TEXT")
         db.execute("CREATE UNIQUE INDEX IF NOT EXISTS orders_driver_token ON orders(driver_token)")
+        # Delays reported by drivers from their link ("~2 h late", "tomorrow morning"): alerts for the office.
+        db.execute("CREATE TABLE IF NOT EXISTS eta_reports (order_id INTEGER NOT NULL, seq INTEGER NOT NULL, "
+                   "reported_at TEXT NOT NULL, delay TEXT NOT NULL, new_at TEXT NOT NULL, PRIMARY KEY (order_id, seq, reported_at))")
         # When each driver link was opened (first and last time): shows the dispatcher who read the trip.
         db.execute("CREATE TABLE IF NOT EXISTS link_opens (token TEXT PRIMARY KEY, first_at TEXT NOT NULL, "
                    "last_at TEXT NOT NULL, views INTEGER NOT NULL DEFAULT 1)")

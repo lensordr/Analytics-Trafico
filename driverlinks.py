@@ -1,13 +1,13 @@
 """Secret per-order links for the driver page (/s/<token>)."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 import re
 import secrets
 
 import deca
 from common import item
-from orders import order_stop_rows, tractor_segments
-from planner import UTC, parse_time, stamp
+from orders import order_stop_rows, tractor_segments, update_stop_eta
+from planner import UTC, WORK_KINDS, ZONE, parse_time, stamp, working_start
 from storage import begin_write
 
 LINK_DAYS_AFTER_END = 7
@@ -126,3 +126,31 @@ def mark_opened(db, token):
 def link_opens(db):
     return {row["token"]: {"first_at": row["first_at"], "last_at": row["last_at"], "views": row["views"]}
             for row in db.execute("SELECT * FROM link_opens")}
+
+
+DELAY_HOURS = {"1": 1, "2": 2, "4": 4}
+REPORT_DAYS = 3
+
+
+def report_delay(db, order, stop, delay, now=None):
+    """The driver is running late for their next stop: move its ETA (and the later stops) and tell the office.
+    "tomorrow": the next morning at 08:00. A loading/unloading after 18:30 or on Sunday moves to the next working morning."""
+    now = now or datetime.now(UTC)
+    base = max(parse_time(stop["planned_at"]), now)
+    if delay == "tomorrow":
+        new = datetime.combine(base.astimezone(ZONE).date() + timedelta(days=1), time(8), ZONE).astimezone(UTC)
+    elif delay in DELAY_HOURS:
+        new = base + timedelta(hours=DELAY_HOURS[delay])
+    else:
+        raise ValueError("Choose how late you are.")
+    if stop["kind"] in WORK_KINDS:
+        new = working_start(new)
+    update_stop_eta(db, {"order_id": order["id"], "seq": stop["seq"], "planned_at": stamp(new)})
+    db.execute("INSERT OR REPLACE INTO eta_reports (order_id, seq, reported_at, delay, new_at) VALUES (?,?,?,?,?)",
+               (order["id"], stop["seq"], stamp(now), delay, stamp(new)))
+    return new
+
+
+def eta_reports(db, now=None):
+    since = stamp((now or datetime.now(UTC)) - timedelta(days=REPORT_DAYS))
+    return [dict(row) for row in db.execute("SELECT * FROM eta_reports WHERE reported_at>=? ORDER BY reported_at DESC", (since,))]

@@ -21,7 +21,7 @@ import driver
 import routing
 from auth import Auth
 from common import item, text
-from driverlinks import driver_deca, driver_link, driver_order, link_opens, mark_opened
+from driverlinks import driver_deca, driver_link, driver_order, eta_reports, link_opens, mark_opened, report_delay
 from itv import delete_itv, import_itv, save_itv
 from masters import archive_master, restore_master, save_master
 from materials import delete_material, save_material
@@ -147,6 +147,9 @@ class Handler(BaseHTTPRequestHandler):
             pass  # the page must open even if the view cannot be recorded
         if query.get("ok") and not message and not error:
             message = driver.TEXT[lang]["saved"]
+        if query.get("eta") and not message and not error:
+            upcoming = next((s for s in stops if s["status"] != "Done"), None)
+            message = driver.TEXT[lang]["eta_saved"] + (driver._when(upcoming["planned_at"], lang) if upcoming else "")
         confirm = int(query["c"]) if query.get("c", "").isdigit() else None
         deca_seq = int(query["deca"]) if query.get("deca", "").isdigit() else None
         if query.get("dc") == "1" and not message:
@@ -177,6 +180,14 @@ class Handler(BaseHTTPRequestHandler):
                     return self.driver_get(token, error=text, lang=lang)
                 return self.redirect(f"/s/{token}?l={lang}&dc={1 if ready else 0}")
             next_stop = next((s for s in stops if s["status"] != "Done"), None)
+            if form.get("action") == "eta":
+                if order["status"] == "Cancelled" or next_stop is None or str(next_stop["seq"]) != form.get("seq"):
+                    return self.redirect(f"/s/{token}?l={lang}")
+                try:
+                    report_delay(db, order, next_stop, form.get("delay"))
+                except ValueError as error:
+                    return self.driver_get(token, error=str(error), lang=lang)
+                return self.redirect(f"/s/{token}?l={lang}&eta=1")
             if order["status"] == "Cancelled" or next_stop is None or str(next_stop["seq"]) != form.get("seq"):
                 # Double tap or an old page: nothing to confirm, just show the current state.
                 return self.redirect(f"/s/{token}?l={lang}")
@@ -243,6 +254,7 @@ class Handler(BaseHTTPRequestHandler):
                 state["tariffs"] = rows(db,"tariffs")
                 state["settings"] = deca.settings(db)
                 state["link_opens"] = link_opens(db)
+                state["eta_reports"] = eta_reports(db)
             folder = getattr(self.server,"backup_folder",None)
             newest = autobackup.latest(folder) if folder else None
             state["auto_backup"] = {"enabled": bool(folder), "latest": stamp(datetime.fromtimestamp(newest.stat().st_mtime,UTC)) if newest else None,

@@ -30,6 +30,13 @@ TEXT = {
         "deca_open": "📄 Deschide DeCA", "deca_fill": "📄 Completează DeCA",
         "deca_office": "Datele au fost salvate. DeCA îl termină biroul.",
         "bad_weight": "Greutatea trebuie să fie între 1 și 60000 kg.",
+        "late": "⏱ Întârzii?",
+        "late_help": "Spune-ne cu cât, biroul vede imediat:",
+        "d1": "~1 oră",
+        "d2": "~2 ore",
+        "d4": "~4 ore",
+        "tomorrow": "🌙 Ajung mâine dimineață",
+        "eta_saved": "Mulțumim! Biroul a fost anunțat. Noua oră estimată: ",
     },
     "es": {
         "title": "Tu viaje", "truck": "Camión", "trailer": "Remolque",
@@ -52,6 +59,13 @@ TEXT = {
         "deca_open": "📄 Abrir DeCA", "deca_fill": "📄 Rellenar DeCA",
         "deca_office": "Datos guardados. La oficina completará el DeCA.",
         "bad_weight": "El peso debe estar entre 1 y 60000 kg.",
+        "late": "⏱ ¿Llegas tarde?",
+        "late_help": "Dinos cuánto, la oficina lo ve al momento:",
+        "d1": "~1 hora",
+        "d2": "~2 horas",
+        "d4": "~4 horas",
+        "tomorrow": "🌙 Llego mañana por la mañana",
+        "eta_saved": "¡Gracias! La oficina ya lo sabe. Nueva hora estimada: ",
     },
     "ru": {
         "title": "Твой рейс", "truck": "Машина", "trailer": "Прицеп",
@@ -74,6 +88,13 @@ TEXT = {
         "deca_open": "📄 Открыть DeCA", "deca_fill": "📄 Заполнить DeCA",
         "deca_office": "Данные сохранены. DeCA заполнит офис.",
         "bad_weight": "Вес должен быть от 1 до 60000 кг.",
+        "late": "⏱ Опаздываешь?",
+        "late_help": "Скажи, на сколько — офис сразу увидит:",
+        "d1": "~1 час",
+        "d2": "~2 часа",
+        "d4": "~4 часа",
+        "tomorrow": "🌙 Приеду завтра утром",
+        "eta_saved": "Спасибо! Офис предупреждён. Новое ожидаемое время: ",
     },
     "uk": {
         "title": "Твій рейс", "truck": "Машина", "trailer": "Причіп",
@@ -96,6 +117,13 @@ TEXT = {
         "deca_open": "📄 Відкрити DeCA", "deca_fill": "📄 Заповнити DeCA",
         "deca_office": "Дані збережено. DeCA заповнить офіс.",
         "bad_weight": "Вага має бути від 1 до 60000 кг.",
+        "late": "⏱ Запізнюєшся?",
+        "late_help": "Скажи, на скільки — офіс одразу побачить:",
+        "d1": "~1 година",
+        "d2": "~2 години",
+        "d4": "~4 години",
+        "tomorrow": "🌙 Приїду завтра вранці",
+        "eta_saved": "Дякуємо! Офіс попереджено. Новий очікуваний час: ",
     },
 }
 DAYS = {"ro": ["lun", "mar", "mie", "joi", "vin", "sâm", "dum"], "es": ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"],
@@ -215,9 +243,17 @@ def render(token, order, stops, places, lang, confirm_seq=None, message="", erro
                        f'<a class="back" href="{base}?l={lang}">{t["back"]}</a>')
         else:
             control = f'<a class="action" href="{base}?l={lang}&c={next_stop["seq"]}">{action}</a>'
+        # Running late: the driver says by how much; the planning and the office are updated at once.
+        late = "" if confirm_seq == next_stop["seq"] else (
+            f'<details class="late"><summary>{t["late"]}</summary><p>{t["late_help"]}</p>'
+            f'<form method="post" action="{base}"><input type="hidden" name="action" value="eta">'
+            f'<input type="hidden" name="seq" value="{next_stop["seq"]}"><input type="hidden" name="l" value="{lang}">'
+            + "".join(f'<button class="late-option" type="submit" name="delay" value="{key}">{t[label]}</button>'
+                      for key, label in (("1", "d1"), ("2", "d2"), ("4", "d4"), ("tomorrow", "tomorrow")))
+            + '</form></details>')
         parts.append(f'<section class="next"><div class="next-label">{t["next"]} · {_label(next_stop, stops, t, order)}</div>'
                      f'<div class="place">{escape(place["company"])}</div><div class="city">{escape(place["city"])}</div>'
-                     f'{control}<a class="map" href="{maps_url(place)}">{t["map"]}</a></section>')
+                     f'{control}<a class="map" href="{maps_url(place)}">{t["map"]}</a>{late}</section>')
     # Once something is loaded: open the DeCA (to show at a control), or fill it in.
     loaded = [s for s in stops if s["kind"] == "Loading" and s["status"] == "Done"]
     # The driver who takes the trailer at a tractor change carries the load too: they can open the DeCA.
