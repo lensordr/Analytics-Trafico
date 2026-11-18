@@ -22,7 +22,7 @@ function requestReplyHref(r,kind,extra=''){const client=getLocation(r.client_id)
   const lang=r.lang==='en'?'en':'es',info={day:new Date(r.load_date+'T12:00:00').toLocaleDateString(lang==='en'?'en-GB':'es-ES',{weekday:'long',day:'numeric',month:'long'}),route:requestRoute(r)};
   return `https://wa.me/${phone}?text=${encodeURIComponent(REPLY_TEXT[lang][kind](info,extra))}`;}
 function requestCard(r){const client=getLocation(r.client_id),[label,tone]=REQUEST_STATUS[r.status]||[r.status,'gray'],tariff=requestTariff(r),newRoute=!r.from_id||!r.to_id;
-  const orders=r.order_ids.map(id=>state.orders.find(o=>o.id===id)).filter(Boolean),plates=orders.map(o=>o.plate).join(', ');
+  const orders=r.order_ids.map(id=>state.orders.find(o=>o.id===id)).filter(Boolean),plates=orders.map(o=>o.plate+(o.trailer?' + '+o.trailer:'')).join(', ');
   const ok=requestReplyHref(r,'ok',plates);
   const facts=[['Loading day',requestDayLabel(r)],['Unload by',r.unload_by?new Date(r.unload_by+'T12:00:00').toLocaleDateString('en-GB',{weekday:'short',day:'2-digit',month:'2-digit'}):''],['Trucks',r.trucks],['Weight',r.weight],['Material',r.material],['Client reference',r.reference],['Contact',r.contact]].filter(([,v])=>v!==''&&v!=null);
   return `<article class="req-card ${r.status.toLowerCase()}"><div class="req-head"><div><strong>${esc(client?.company||'?')}</strong><small>Sent ${formatDate(r.created_at)} · ${r.lang==='en'?'English':'Spanish'}</small></div><div>${badge(label,tone)}${newRoute?badge('New route · no tariff','amber'):''}</div></div>

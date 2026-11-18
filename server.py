@@ -26,6 +26,7 @@ import routing
 from auth import Auth
 from clientlinks import client_by_token, client_link, client_requests, client_routes, link_order, load_requests, revoke_client_link, set_request_status, submit_request
 from common import item, text
+from names import apply_name_fixes, name_fixes
 from driverlinks import driver_deca, driver_link, driver_order, eta_reports, link_opens, mark_opened, report_delay
 from itv import delete_itv, import_itv, save_itv
 from masters import archive_master, restore_master, save_master
@@ -225,8 +226,15 @@ class Handler(BaseHTTPRequestHandler):
             places = {row["id"]: row for row in db.execute("SELECT id, company, city FROM locations")}
             history = client_requests(db, company["id"])
         label = lambda pid, typed: f'{places[pid]["company"]} ({places[pid]["city"]})' if pid in places else " ".join(typed.split())[:60]
+        ids = [order_id for request in history for order_id in request["order_ids"]]
+        with connect(self.server.database) as db:
+            orders = {row["id"]: row for row in db.execute(
+                f"SELECT id, plate, trailer, pickup_at, status FROM orders WHERE id IN ({','.join('?' * len(ids))})", ids)} if ids else {}
         for request in history:
             request["route"] = f'{label(request["from_id"], request["from_text"])} → {label(request["to_id"], request["to_text"])}'
+            # The assembly that loads (tractor + trailer) and the day: shown to the client once the order is planned.
+            request["vehicles"] = [{"plate": o["plate"], "trailer": o["trailer"] or "", "day": parse_time(o["pickup_at"]).astimezone(ZONE).date().isoformat()}
+                                   for o in (orders.get(i) for i in request["order_ids"]) if o and o["status"] != "Cancelled"]
         if query.get("ok") and not message and not error:
             message = client.TEXT[lang]["sent"]
         today = datetime.now(UTC).astimezone(ZONE).date().isoformat()
@@ -508,6 +516,10 @@ class Handler(BaseHTTPRequestHandler):
                     result = {"id":create_order(db,data)}
                     if data.get("request_id"):  # created from a client request: link them
                         link_order(db,data["request_id"],result["id"],self.auth.user(self.headers.get("Cookie")) or "")
+                elif path == "/api/name-fixes":
+                    result = {"fixes": name_fixes(db)}
+                elif path == "/api/name-fixes-apply":
+                    result = apply_name_fixes(db,data)
                 elif path == "/api/client-link":
                     result = client_link(db,data)
                 elif path == "/api/client-link-revoke":

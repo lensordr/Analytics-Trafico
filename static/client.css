@@ -27,3 +27,4 @@ body.client{margin:0;background:#f2f5f2;color:#142b21;font-family:system-ui,"Seg
 .client .no-match{font-size:13px;color:#7a5208;margin:6px 0 0}
 .client .usual h2{margin-bottom:4px}.client .usual .hint{margin:0 0 10px}
 .client .route-pick{display:block;width:100%;text-align:left;border:1px solid #d6e0d9;border-radius:10px;background:#f7faf8;padding:10px 12px;margin-bottom:8px;font:inherit;font-size:15px;color:#142b21;cursor:pointer}.client .route-pick span{margin:0 8px;color:#12694b;font-weight:700}.client .route-pick small{color:#5e7066}.client .route-pick.on{border-color:#12694b;background:#e3f4ea}
+.client .vehicle{margin-top:6px;background:#e3f4ea;color:#0d5236;border-radius:8px;padding:7px 10px;font-size:14px}

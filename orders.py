@@ -212,7 +212,8 @@ def build_plan(db, data, create=False):
             route_truck = {**truck, "trailer": previous["trailer"]["plate"] if previous["trailer"] else ""}
             leg = routing.truck_route(previous["location"], stop["location"], route_truck, stamp(moment))
             legs.append((leg["distance_km"], leg["driving_hours"]))
-            notices += leg["notices"]
+            notices += [f'{previous["location"]["city"]} → {stop["location"]["city"]}: {text}' if leg.get("critical") else text
+                        for text in leg["notices"]]
             moment += timedelta(hours=leg["driving_hours"] + stop["handling_hours"])
         source = "HERE truck"
     elif mode == "manual":

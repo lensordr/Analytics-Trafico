@@ -81,6 +81,16 @@ def routing_departure(value):
         raise ValueError("The route departure time must include a valid date and timezone.") from None
 
 
+NOTICE_TEXT = {
+    "violatedVehicleRestriction": "the route passes a truck restriction (weight, height, width or access)",
+    "violatedBlockedRoad": "the route uses a road closed to this vehicle",
+    "violatedCriticalTimeDependentRestriction": "the route passes a restriction at this time of day",
+    "violatedEmergencyGate": "the route passes an emergency gate",
+    "violatedZoneRestriction": "the route enters a restricted zone",
+    "violatedAvoidTollRoad": "the route uses a toll road",
+}
+
+
 def truck_route(origin, destination, truck, departure):
     if any(point.get("lat") is None or point.get("lon") is None for point in (origin, destination)):
         raise ValueError("Both locations need confirmed coordinates. Use Find address or enter coordinates in Locations.")
@@ -101,12 +111,19 @@ def truck_route(origin, destination, truck, departure):
         raise ValueError("HERE did not return a truck route.")
     route = routes[0]
     notices = route.get("notices", []) + [n for section in route["sections"] for n in section.get("notices", [])]
-    if any(n.get("severity") == "critical" for n in notices):
-        raise ValueError("HERE reported a critical route restriction. Check the locations and vehicle profile.")
+    # A critical notice (e.g. a truck restriction on the last metres to a gate HERE does not know) no longer blocks the
+    # order: the route is kept and the dispatcher sees what HERE reported, to check the place and the tractor.
+    def label(n):
+        text = NOTICE_TEXT.get(n.get("code")) or n.get("title") or n.get("code") or "Route notice"
+        if n.get("severity") == "critical":
+            return (f"⚠ HERE: {text}. The route was calculated anyway: check the position of the places "
+                    "(gate, not town centre) and the tractor's dimensions, or enter the km by hand.")
+        return text
     distance = sum(section["summary"]["length"] for section in route["sections"])/1000
     hours = sum(section["summary"]["duration"] for section in route["sections"])/3600
     return {"distance_km": round(distance, 1), "driving_hours": round(hours, 4),
-            "source": "HERE truck", "notices": [n.get("title", n.get("code", "Route notice")) for n in notices],
+            "source": "HERE truck", "notices": [label(n) for n in notices],
+            "critical": any(n.get("severity") == "critical" for n in notices),
             "profile": {key: truck[key] for key in ("height", "width", "length", "weight")}}
 
 

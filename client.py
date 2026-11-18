@@ -18,7 +18,7 @@ TEXT = {
         "sent": "¡Solicitud enviada! La oficina la ha recibido y te confirmará el camión.",
         "yours": "Tus últimas solicitudes", "none": "Todavía no has enviado ninguna solicitud.",
         "status": {"New": "Recibida", "Planned": "Confirmada", "Rejected": "No podemos"},
-        "trucks_short": "camión(es)", "new_route": "Ruta nueva",
+        "trucks_short": "camión(es)", "new_route": "Ruta nueva", "truck": "Camión", "trailer": "remolque", "loads": "carga el",
         "errors": {"choose_place": "Elige el punto de carga y el de descarga de la lista.",
                    "other_place": "Escribe la dirección completa de la otra carga o descarga.",
                    "load_date": "Elige un día de carga válido (desde hoy hasta 4 meses).",
@@ -42,7 +42,7 @@ TEXT = {
         "sent": "Request sent! The office has it and will confirm the truck.",
         "yours": "Your latest requests", "none": "You have not sent any request yet.",
         "status": {"New": "Received", "Planned": "Confirmed", "Rejected": "We cannot"},
-        "trucks_short": "truck(s)", "new_route": "New route",
+        "trucks_short": "truck(s)", "new_route": "New route", "truck": "Truck", "trailer": "trailer", "loads": "loads on",
         "errors": {"choose_place": "Choose the loading and the unloading point from the list.",
                    "other_place": "Type the full address of the other loading or unloading.",
                    "load_date": "Choose a valid loading day (from today up to 4 months).",
@@ -115,6 +115,9 @@ def render(token, client, routes, requests, lang, today, message="", error="", f
         f'<li><span class="badge {r["status"].lower()}">{t["status"].get(r["status"], r["status"])}</span>'
         f'<strong>{escape(_day(r["load_date"]))}</strong> · {r["trucks"]} {t["trucks_short"]}<br><small>{escape(r["route"])}</small>'
         + (f'<br><small class="reason">{escape(r["reason"])}</small>' if r["status"] == "Rejected" and r.get("reason") else "")
+        + "".join(f'<div class="vehicle">🚛 {t["truck"]} <strong>{escape(v["plate"])}</strong>'
+                  + (f' + {t["trailer"]} <strong>{escape(v["trailer"])}</strong>' if v["trailer"] else "")
+                  + f' · {t["loads"]} {_day(v["day"])}</div>' for v in r.get("vehicles", []))
         + "</li>" for r in requests) or f'<li class="muted">{t["none"]}</li>'
     usual = sorted((r for r in routes if r["trips"]), key=lambda r: -r["trips"])[:6]
     usual_html = (f'<section class="card usual"><h2>{t["usual"]}</h2><p class="hint">{t["usual_help"]}</p>'

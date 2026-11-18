@@ -183,7 +183,7 @@ class DispatchTests(unittest.TestCase):
             doc = deca.document(db, order_id)
             name, body = deca.pdf(db, order_id)
         rows = dict(doc["rows"])
-        self.assertEqual(rows["Cargador"], "Ferimet S.L.U (NIF B17327610)")
+        self.assertEqual(rows["Cargador"], "Ferimet S.L.U. (NIF B17327610)")
         self.assertEqual(rows["Domicilio cargador"], "Calle Ferralla, 12, 08755 Castellbisbal, España")
         self.assertEqual(rows["Transportista Efectivo"], "Carrier Test SL (NIF B00000000)")
         self.assertTrue(rows["1. Carga"].endswith("— XATARRA, 25.560 kg"))
@@ -214,7 +214,7 @@ class DispatchTests(unittest.TestCase):
         self.assertTrue(name.endswith(".pdf") and body.startswith(b"%PDF-1.4") and body.rstrip().endswith(b"%%EOF"))
         self.assertIn(b"(Documento de Control \\(DeCA\\)) Tj", body)
         self.assertIn(first["id"].encode(), body)
-        self.assertIn("Cargador: Ferimet S.L.U (NIF B17327610)", deca.qr_text(doc))
+        self.assertIn("Cargador: Ferimet S.L.U. (NIF B17327610)", deca.qr_text(doc))
         # Two loadings, a partial unloading, then the rest at the final unloading.
         with connect(self.database) as db:
             copper = app.save_material(db, {"code": "04", "name": "COBRE"})
@@ -1096,8 +1096,52 @@ class DispatchTests(unittest.TestCase):
             app.link_order(db,known["id"],first+1)
             self.assertEqual(load_requests(db,parse_time("2030-01-07T10:00"))[1]["status"],"Planned")
             set_request_status(db,{"id":new_route["id"],"status":"Rejected","reason":"No trucks that day"})
+        # The client sees the assembly that loads (tractor + trailer) and the day once the order is linked.
+        server=app.ThreadingHTTPServer(("127.0.0.1",0),app.Handler)
+        server.database=self.database
+        thread=threading.Thread(target=server.serve_forever,daemon=True)
+        thread.start()
+        try:
+            with urlopen(f"http://127.0.0.1:{server.server_port}/c/{link['token']}?l=en") as response:
+                page=response.read().decode()
+            self.assertIn("Truck <strong>TEST-001</strong> + trailer <strong>TR-001</strong> · loads on 07/01/2030",page)
+            self.assertIn("No trucks that day",page)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+        with connect(self.database) as db:
             app.revoke_client_link(db,{"client_id":ferimet})
             self.assertIsNone(app.client_by_token(db,link["token"]))
+
+    def test_company_and_town_names_written_properly(self):
+        from names import apply_name_fixes, name_fixes, proper_name
+        cases={"FERIMET S.L":"Ferimet S.L.","TEGA GESTIÓ AMBIENTAL SL":"Tega Gestió Ambiental S.L.","Caldes de montbui":"Caldes de Montbui",
+               "BEFESA LES FRANQUESES":"Befesa Les Franqueses","PLANTA DE LA VEGA":"Planta de la Vega","CSM Centre service métaux":"CSM Centre Service Métaux",
+               "Planta PreZero Zona Franca":"Planta PreZero Zona Franca","METALES UNZUETA II S.L.":"Metales Unzueta II S.L.","MEGASIDER Zaragoza SAU":"Megasider Zaragoza S.A.U."}
+        for before,after in cases.items():
+            self.assertEqual(proper_name(before),after)
+        for before,after in {"LONS-LE-SAUNIER":"Lons-le-Saunier","VILOBÍ D'ONYAR":"Vilobí d'Onyar","L'ESQUIROL":"L'Esquirol","SENTMENAT":"Sentmenat"}.items():
+            self.assertEqual(proper_name(before,False),after)
+        with connect(self.database) as db:
+            created=app.save_master(db,"locations",{"company":"RECUPERACIONES PEREZ SL","city":"ARANJUEZ","postal_code":"28300","country":"Spain"})
+            self.assertEqual((app.item(db,"locations",created)["company"],app.item(db,"locations",created)["city"]),("Recuperaciones Perez S.L.","Aranjuez"))
+            db.execute("UPDATE locations SET company='WAREHOUSE B SL', city='PARIS' WHERE id=?",(self.b,))
+            fixes={f["id"]:f for f in name_fixes(db)}
+            self.assertEqual(fixes[self.b]["company"]["after"],"Warehouse B S.L.")
+            with self.assertRaises(ValueError):  # a different name is not a capitals fix
+                apply_name_fixes(db,{"items":[{"id":self.b,"company":"Another Company"}]})
+            apply_name_fixes(db,{"items":[{"id":self.b,"company":"WareHouse B S.L.","city":"Paris"}]})
+            self.assertEqual((app.item(db,"locations",self.b)["company"],app.item(db,"locations",self.b)["city"]),("WareHouse B S.L.","Paris"))
+
+    def test_here_critical_notice_warns_instead_of_blocking(self):
+        answer={"routes":[{"sections":[{"summary":{"length":250000,"duration":12600},
+                 "notices":[{"code":"violatedVehicleRestriction","severity":"critical"}]}]}]}
+        with patch.object(app.routing,"request",return_value=answer):
+            leg=app.routing.truck_route({"lat":40.4,"lon":-3.7},{"lat":41.6,"lon":-0.9},{"height":4,"width":2.55,"length":16.5,"weight":40000},"any")
+        self.assertEqual(leg["distance_km"],250.0)
+        self.assertTrue(leg["critical"])
+        self.assertIn("truck restriction",leg["notices"][0])
 
     def test_claude_connector_tools_read_the_planning(self):
         import assistant
