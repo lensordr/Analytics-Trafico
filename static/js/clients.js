@@ -14,7 +14,7 @@ function clientsView(){const words=searchNorm(clientsQuery).split(' ').filter(Bo
   const list=all.filter(c=>!words.length||words.every(w=>searchNorm(`${c.place.company} ${c.place.city} ${c.place.postal_code} ${c.place.phone||''}`).includes(w)))
     .sort({orders:(a,b)=>b.orders-a.orders||b.routes-a.routes,routes:(a,b)=>b.routes-a.routes,name:(a,b)=>a.place.company.localeCompare(b.place.company),recent:(a,b)=>String(b.last).localeCompare(String(a.last))}[clientsSort]);
   const sorts=[['orders','Most orders'],['routes','Most routes'],['recent','Last order'],['name','Name']].map(([k,l])=>`<button class="${clientsSort===k?'selected':''}" data-action="clients-sort" data-id="${k}">${l}</button>`).join('');
-  return heading('Clients','Companies with saved routes as client. Copy their order-form link or send it on WhatsApp: they see only their routes, never prices.')+
+  return heading('Clients','Companies with saved routes as client. Copy their order-form link or send it on WhatsApp: they see only their routes, never prices.')+keyClientsHtml()+
   `<div class="search-row"><input id="clients-search" type="search" placeholder="Search client, town, postal code…" aria-label="Search clients" value="${esc(clientsQuery)}"><span class="badge gray">${all.length} clients with routes</span><div class="view-toggle">${sorts}</div></div>
   <section class="panel"><div class="schedule"><table class="clients-table"><thead><tr><th>Client</th><th>Routes</th><th>Orders</th><th>Requests</th><th>Form link</th><th></th></tr></thead><tbody>
   ${list.map(c=>{const p=c.place,phone=waPhone(p.phone);return `<tr><td><strong>${esc(p.company)}</strong><small>${esc(p.city)} · ${esc(p.postal_code)}${p.phone?' · '+esc(p.phone):''}</small></td>

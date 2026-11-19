@@ -51,6 +51,8 @@ document.addEventListener('click',async event=>{const nav=event.target.closest('
   if(action==='clients-sort'){clientsSort=id;render();return;}
   if(action==='client-copy'){await copyClientLink(id);return;}
   if(action==='client-wa'){await sendClientWhatsapp(id);return;}
+  if(action==='witruck-import'){witruckImportModal();return;}
+  if(action==='lane-order'){openLaneOrder(button.dataset.index);return;}
   if(action==='client-offer'){await sendClientWhatsapp(id,nextLoadOffer());return;}
   if(action==='name-fixes'){await openNameFixes();return;}
   if(action==='name-fixes-apply'){await applyNameFixes(button);return;}
@@ -102,6 +104,7 @@ document.addEventListener('submit',async event=>{event.preventDefault();const fo
   if(form.getAttribute('id')==='archive-form'){const data=formObject(form);const result=await api('/api/archive',{kind:form.dataset.type,id:Number(form.dataset.id),reason:data.reason,note:data.note||''});$('#modal').close();await refresh();toast(`${result.archived} deleted (${data.reason}). History is kept; restore it from Show archived.`);}
 }catch(error){showError(form,error);}finally{if(button)button.disabled=false;}});
 document.addEventListener('change',event=>{const input=event.target;
+  if(input.id==='witruck-files'&&input.files?.length){const files=[...input.files];input.value='';importWitruckFiles(files);return;}
   if(input.id==='nf-all'){for(const c of document.querySelectorAll('.nf-row:not([hidden]) [data-nf-check]'))c.checked=input.checked;return;}
   if(input.id==='f-wa-lang'){const form=$('#wa-form');setWaLang(input.value,Number(form.dataset.driver)||0);const o=state.orders.find(x=>x.id===Number(form.dataset.order));form.elements.text.value=whatsappText(o,waLang,form.dataset.link,form.dataset.part);syncWhatsapp();return;}
   if(input.id==='itv-kind'||input.id==='itv-status'){itvFilter[input.id==='itv-kind'?'kind':'status']=input.value;render();return;}

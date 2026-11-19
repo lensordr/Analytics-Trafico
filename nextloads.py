@@ -14,6 +14,7 @@ from orders import DEFAULT_HANDLING_HOURS
 from tariffs import MIN_BILLED_KG
 from planner import UTC, ZONE, number, parse_time, stamp
 from storage import rows
+from market import lanes_near
 
 ROAD_FACTOR = 1.25
 AVERAGE_KMH = 65
@@ -154,5 +155,6 @@ def next_loads(db, data, now=None):
             "weekend_deadline": stamp(deadline), "weekend_away": away, "towards_home": towards_home,
             "driver": {"id": driver["id"], "name": driver["name"]} if driver else None,
             "total": len(results), "routes": results, "missing_coordinates": len(missing),
+            "market": lanes_near(db, origin, radius, now),
             "note": None if origin.get("lat") is not None else
             f"{origin['company']} ({origin['city']}) has no coordinates: only routes loading in the same city are shown."}

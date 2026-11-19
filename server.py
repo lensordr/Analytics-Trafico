@@ -27,6 +27,7 @@ from auth import Auth
 from clientlinks import client_by_token, client_link, client_requests, client_routes, link_order, load_requests, revoke_client_link, set_request_status, submit_request
 from common import item, text
 from names import apply_name_fixes, name_fixes
+from market import import_witruck, key_clients
 from driverlinks import driver_deca, driver_link, driver_order, eta_reports, link_opens, mark_opened, report_delay
 from itv import delete_itv, import_itv, save_itv
 from masters import archive_master, restore_master, save_master
@@ -509,7 +510,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_body(403,{"error":"Please reload the app and try again."})
         try:
             length = int(self.headers.get("Content-Length","0"))
-            limit = 3_000_000 if urlsplit(self.path).path == "/api/itv-import" else 100000
+            limit = 3_000_000 if urlsplit(self.path).path in ("/api/itv-import", "/api/witruck-import") else 100000
             if not 0<length<limit:
                 raise ValueError("Invalid request size.")
             data = json.loads(self.rfile.read(length))
@@ -530,6 +531,10 @@ class Handler(BaseHTTPRequestHandler):
                     result = {"id":create_order(db,data)}
                     if data.get("request_id"):  # created from a client request: link them
                         link_order(db,data["request_id"],result["id"],self.auth.user(self.headers.get("Cookie")) or "")
+                elif path == "/api/witruck-import":
+                    result = import_witruck(db,data)
+                elif path == "/api/key-clients":
+                    result = key_clients(db)
                 elif path == "/api/name-fixes":
                     result = {"fixes": name_fixes(db)}
                 elif path == "/api/name-fixes-apply":

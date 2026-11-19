@@ -232,6 +232,11 @@ def loads_near(data, args):
             "unloads_at": _fmt(parse_time(r["unload_at"])) if r["unload_at"] else None,
             "home_for_weekend": r["home_for_weekend"], "transport_company": r["transport_client"],
             "done_before": r["orders"]} for r in routes["routes"][:10]],
+        "key_client_lanes": [{
+            "client": l["client"], "loading": f"{l['from']['company']} · {l['from']['city']}", "unloading": f"{l['to']['company']} · {l['to']['city']}",
+            "trips_4_weeks": l["trips"], "with_own_trucks": l["own"], "with_partners": l["trips"] - l["own"], "partners": l["carriers"],
+            "last_trip": l["last"], "empty_km": l["empty_km"], "eur_per_trip": l["per_trip"],
+            "loads_per_week_near_unloading": round(l["onward"] / 4) if l["onward"] is not None else None} for l in routes.get("market", [])],
         "companies_nearby": [{
             "id": c["location"]["id"], "company": c["location"]["company"], "city": c["location"]["city"],
             "km_air": c["km"], "loads_given": c["loads"], "last_load": c["last_load_at"][:10] if c["last_load_at"] else None,
@@ -256,7 +261,8 @@ TOOLS = {
                           "at": {"type": "string", "description": "Wanted loading time, Europe/Madrid, e.g. 2026-11-19 08:00 (default: now)"},
                           "limit": {"type": "integer", "description": "How many options (default 6)"}}, ["location_id"]),
     "loads_near": (loads_near, "What a tractor (by plate, from where it becomes free) or a place can load next: saved "
-                   "routes with tariffs (empty km, revenue, €/km, home for the weekend) and saved companies nearby with "
+                   "routes with tariffs (empty km, revenue, €/km, home for the weekend), the key clients' lanes loading nearby "
+                   "(Witruck history, last 4 weeks: how often, own trucks or partners) and saved companies nearby with "
                    "their load and contact history.",
                    {"plate": {"type": "string", "description": "Tractor plate"},
                     "location_id": {"type": "integer", "description": "Or a place id (from find_places)"},

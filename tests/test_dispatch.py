@@ -1032,6 +1032,51 @@ class DispatchTests(unittest.TestCase):
             server.server_close()
             thread.join()
 
+    def test_witruck_import_ranks_key_clients_and_lanes_near_a_truck(self):
+        from datetime import datetime
+        from market import import_witruck, key_clients, lanes_near, number, postal
+        from nextloads import next_loads
+        from planner import UTC, ZONE
+        self.assertEqual((number("5,78"), number("2.200"), number("0"), postal("2.08755"), postal("08210."), postal("2408 ZC")),
+                         (5.78, 2200, None, "08755", "08210", "2408ZC"))
+        routes = ("S.No;numero;orden de carga;fecha;estado;distancia;tractora;conductor;tipo transportista;comentarios;comentarios oc;"
+                  "nombre del origen;direccion origen;cp origen;poblacion origen;provincia origen;pais origen;fecha prev carga;"
+                  "nombre del destino;direccion destino;cp destino;poblacion destino;provincia destino;pais destino;fecha prev descarga;"
+                  "cif transportista;nombre fiscal\r\n")
+        billing = ("S.No;orden de ruta;orden de carga;fecha oc;estado oc;comentarios oc;tractora;remolque;conductor;tipo transportista;"
+                   "nombre cliente;cif cliente;sede;poblacion origen or;cp origen or;poblacion destino or;cp destino or;material;"
+                   "codigo de material;peso origen;peso destino;precio unitario oc;precio total oc;tipo de precio oc;precio total or\r\n")
+        with connect(self.database) as db:
+            client = app.save_master(db,"locations",{"company":"FERIMET S.L.","city":"Madrid","postal_code":"28001","country":"Spain","kind":"Client"})
+            app.save_tariff(db,{"client_id":client,"from_id":self.a,"to_id":self.b,"basis":"trip","rate":100})
+        day = datetime.now(UTC).astimezone(ZONE).date().isoformat()
+        for n in range(3):
+            own = "I" if n == 0 else "A"
+            carrier = "" if own == "I" else "GROUPTRANS S. COOP."
+            routes += (f"{n};{900+n};1;{day};FINALIZADA;1270;7377NNV;Javier;{own};;;WAREHOUSE A;Calle 1;28001;Madrid;Madrid;España;;"
+                       f"Warehouse B;Rue 2;75001;Paris;Paris;Francia;;B1;{carrier}\r\n")
+            billing += (f"{n};{900+n};1;{day};FACTURADA;;7377NNV;R1;Javier;{own};FERIMET S.L.;B17327610;;Madrid;28001;Paris;75001;"
+                        f"XATARRA;21;24;;6,5;156;Peso origen (Tn) x €;156\r\n")
+        with connect(self.database, fresh=True) as db:
+            self.assertIn("3 Witruck routes", import_witruck(db, {"files": [routes, billing]})["message"])
+        with connect(self.database, fresh=True) as db:
+            self.assertIn("0 new", import_witruck(db, {"files": [billing]})["message"])  # the same routes again: updated, not doubled
+        with self.assertRaises(ValueError):
+            with connect(self.database, fresh=True) as db:
+                import_witruck(db, {"files": ["a;b\r\n1;2\r\n"]})
+        with connect(self.database) as db:
+            ranking = key_clients(db)
+            self.assertEqual(ranking["total"], 3)
+            top = ranking["clients"][0]
+            self.assertEqual((top["name"], top["client_id"], top["trips"], top["own"], top["revenue"]), ("Ferimet S.L.", client, 3, 1, 468))
+            lanes = lanes_near(db, app.item(db, "locations", self.a), 50)
+            self.assertEqual(len(lanes), 1)
+            lane = lanes[0]
+            self.assertEqual((lane["client_id"], lane["from"]["id"], lane["to"]["id"], lane["trips"], lane["own"], lane["carriers"]),
+                             (client, self.a, self.b, 3, 1, ["GROUPTRANS S. COOP."]))
+            self.assertEqual(lanes_near(db, app.item(db, "locations", self.b), 50), [])  # nothing loads near Paris
+            self.assertEqual(next_loads(db, {"location_id": self.a})["market"][0]["trips"], 3)
+
     def test_client_link_shows_only_own_routes_without_prices(self):
         from clientlinks import client_link, client_routes, load_requests, set_request_status
         with connect(self.database) as db:

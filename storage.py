@@ -494,6 +494,18 @@ def initialize(target):
             status TEXT NOT NULL DEFAULT 'New', reason TEXT NOT NULL DEFAULT '', order_ids TEXT NOT NULL DEFAULT '[]',
             handled_at TEXT, handled_by TEXT NOT NULL DEFAULT '')""")
         db.execute("CREATE INDEX IF NOT EXISTS load_requests_client ON load_requests(client_id, created_at)")
+        # Witruck history (imported CSV exports): every trip of the last months, own trucks and partners.
+        db.execute("""CREATE TABLE IF NOT EXISTS market_trips (
+            route_no INTEGER PRIMARY KEY, day TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '',
+            client TEXT NOT NULL DEFAULT '', client_nif TEXT NOT NULL DEFAULT '', plate TEXT NOT NULL DEFAULT '',
+            trailer TEXT NOT NULL DEFAULT '', driver TEXT NOT NULL DEFAULT '', own INTEGER NOT NULL DEFAULT 0,
+            carrier TEXT NOT NULL DEFAULT '', material TEXT NOT NULL DEFAULT '', km REAL, weight_t REAL,
+            price_unit REAL, price_basis TEXT NOT NULL DEFAULT '', revenue REAL, cost REAL,
+            from_company TEXT NOT NULL DEFAULT '', from_address TEXT NOT NULL DEFAULT '', from_pc TEXT NOT NULL DEFAULT '',
+            from_city TEXT NOT NULL DEFAULT '', from_country TEXT NOT NULL DEFAULT '',
+            to_company TEXT NOT NULL DEFAULT '', to_address TEXT NOT NULL DEFAULT '', to_pc TEXT NOT NULL DEFAULT '',
+            to_city TEXT NOT NULL DEFAULT '', to_country TEXT NOT NULL DEFAULT '', imported_at TEXT NOT NULL DEFAULT '')""")
+        db.execute("CREATE INDEX IF NOT EXISTS market_trips_day ON market_trips(day)")
         # When each driver link was opened (first and last time): shows the dispatcher who read the trip.
         db.execute("CREATE TABLE IF NOT EXISTS link_opens (token TEXT PRIMARY KEY, first_at TEXT NOT NULL, "
                    "last_at TEXT NOT NULL, views INTEGER NOT NULL DEFAULT 1)")

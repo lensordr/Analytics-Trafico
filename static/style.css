@@ -273,3 +273,7 @@
 .call-client{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:7px 0;border-top:1px solid #e3ebdb}.call-client:first-of-type{border-top:0}.call-client small{display:block;color:var(--muted);font-size:10px;margin-top:3px}.call-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 @media (max-width:700px){.call-client{flex-direction:column;align-items:flex-start}}
 .call-client strong{font-size:12px}
+
+/* ---- Key clients (Witruck) */
+.key-clients{margin-bottom:16px}.key-table th.num,.key-table td.num{text-align:right;white-space:nowrap}.key-note{padding:0 16px 12px}
+.key-lanes{border-color:#e6d9a8;background:#fffcf2}.key-lanes .lane{font-size:11px;margin-left:6px}.key-lanes small.inline{display:inline;margin:0;color:var(--muted)}.key-lanes .partner{color:#8a5a00}
