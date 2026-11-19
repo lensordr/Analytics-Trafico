@@ -19,6 +19,7 @@ class TursoReplica:
     """
 
     SYNC_INTERVAL = 30  # seconds between background pulls when only reading
+    STALE_AFTER = 300  # a read waits for a pull only if the background pulls stopped for this long
 
     def __init__(self, local_path, url, token):
         import libsql  # only needed when Turso is configured
@@ -32,6 +33,18 @@ class TursoReplica:
         # Once per connection: every statement sent to Turso costs a network round trip.
         self._conn.execute("PRAGMA foreign_keys = ON")
         self.sync()
+        # Pull other copies' changes in the background: a page load never waits for the network.
+        threading.Thread(target=self._background_sync, daemon=True, name="turso-sync").start()
+
+    def _background_sync(self):
+        while True:
+            time.sleep(self.SYNC_INTERVAL)
+            if time.monotonic() - self._last_sync < self.SYNC_INTERVAL:
+                continue  # a save just synced
+            try:
+                self.sync()
+            except Exception as error:  # network hiccup: try again next round
+                print(f"Turso background sync failed: {error}", flush=True)
 
     def sync(self):
         with self._lock:
@@ -42,7 +55,7 @@ class TursoReplica:
     def session(self, fresh=False):
         with self._lock:
             # Saves check conflicts against the latest data (another copy may have written meanwhile).
-            if fresh or time.monotonic() - self._last_sync > self.SYNC_INTERVAL:
+            if fresh or time.monotonic() - self._last_sync > self.STALE_AFTER:
                 self.sync()
             db = _LibsqlConnection(self._conn, self.sync)
             try:

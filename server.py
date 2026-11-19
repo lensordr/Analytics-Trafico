@@ -87,6 +87,18 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
+    def send_static(self, path, mime):
+        """App files (JS, CSS, pages): the browser keeps them and asks "changed?"; unchanged → 304, nothing sent."""
+        body = path.read_bytes()
+        tag = '"' + hashlib.sha1(body).hexdigest()[:20] + '"'
+        if self.headers.get("If-None-Match") == tag:
+            self.send_response(304)
+            self.send_header("ETag", tag)
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            return
+        self.send_body(200, body, mime, {"ETag": tag, "Cache-Control": "no-cache"})
+
     def valid_host(self):
         local = {f"127.0.0.1:{self.server.server_port}",f"localhost:{self.server.server_port}"}
         return self.headers.get("Host") in local | getattr(self.server,"public_hosts",set())
@@ -474,11 +486,13 @@ class Handler(BaseHTTPRequestHandler):
         files = {"/":("index.html","text/html; charset=utf-8"),"/analytics.js":("analytics.js","text/javascript; charset=utf-8"),"/search-select.js":("search-select.js","text/javascript; charset=utf-8"),"/style.css":("style.css","text/css; charset=utf-8"),"/driver.css":("driver.css","text/css; charset=utf-8"),"/client.css":("client.css","text/css; charset=utf-8"),"/client.js":("client.js","text/javascript; charset=utf-8")}
         # Interface modules: static/js/<name>.js (names checked, so no other file can be read).
         if re.fullmatch(r"/js/[a-z][a-z-]*\.js", path) and (ROOT/"static"/path.lstrip("/")).is_file():
-            return self.send_body(200,(ROOT/"static"/path.lstrip("/")).read_bytes(),"text/javascript; charset=utf-8")
+            return self.send_static(ROOT/"static"/path.lstrip("/"),"text/javascript; charset=utf-8")
         if path not in files:
             return self.send_body(404,{"error":"Page not found"})
         filename,mime = files[path]
-        self.send_body(200,(ROOT/"static"/filename).read_bytes(),mime)
+        if path == "/":
+            return self.send_body(200,(ROOT/"static"/filename).read_bytes(),mime)
+        self.send_static(ROOT/"static"/filename,mime)
 
     def do_POST(self):
         if self.valid_host() and urlsplit(self.path).path == "/login":
