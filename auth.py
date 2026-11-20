@@ -3,8 +3,8 @@
 Users: APP_USERS = "name1:password1;name2:password2" (each dispatcher signs in with their own name and
 password, from any computer, at the same time). APP_PASSWORD alone still works: one shared password.
 Without either (the app on your own computer) nothing changes: no login.
-SERVICE_USERS = "service,taller": names of APP_USERS that only see ITV and the tractors' maintenance, read only
-(the workshop). Every other user is a dispatcher.
+SERVICE_USERS = "service,taller": names of APP_USERS that only see ITV and the tractors' maintenance (the workshop):
+they enter the km of the oil changes, nothing else. Every other user is a dispatcher.
 """
 import hashlib
 import hmac
@@ -90,7 +90,7 @@ class Auth:
         return None
 
     def role(self, user):
-        """'service' for the workshop accounts (ITV and maintenance, read only), else 'dispatcher'."""
+        """'service' for the workshop accounts (ITV, and the maintenance km only), else 'dispatcher'."""
         return "service" if user and user in self.service_users else "dispatcher"
 
     def valid(self, cookie_header):

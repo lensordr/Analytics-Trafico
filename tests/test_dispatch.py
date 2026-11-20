@@ -1066,7 +1066,7 @@ class DispatchTests(unittest.TestCase):
             self.assertEqual((truck["last_service_km"], truck["service_due_km"], truck["odometer_km"], truck["odometer_on"]),
                              (541000, 601000, 541000, "2026-12-05"))
 
-    def test_service_account_sees_only_itv_and_maintenance_read_only(self):
+    def test_service_account_sees_only_itv_and_maintenance_and_enters_km(self):
         from auth import Auth
         import http.client
         with connect(self.database) as db:
@@ -1103,11 +1103,15 @@ class DispatchTests(unittest.TestCase):
             for path in ("/api/backup", "/api/deca.pdf?order=1"):
                 self.assertEqual(call("GET", path, headers=sessions["service"])[0], 403)
             write = {**sessions["service"], "Content-Type": "application/json", "X-CSRF-Token": app.TOKEN}
-            for path in ("/api/truck-km", "/api/itv", "/api/trucks"):
+            for path in ("/api/itv", "/api/trucks", "/api/orders", "/api/archive"):
                 self.assertEqual(call("POST", path, json.dumps({"id": self.truck}).encode(), write)[0], 403)
-            status = call("POST", "/api/truck-km", json.dumps({"day": "2026-11-30", "items": [{"id": self.truck, "last_service_km": 480000, "odometer_km": 520000}]}).encode(),
-                          {**sessions["malcom1"], "Content-Type": "application/json", "X-CSRF-Token": app.TOKEN})[0]
-            self.assertEqual(status, 200)
+            # ... but the workshop enters the km of the oil changes and the month-end km.
+            km = {"day": "2026-11-30", "items": [{"id": self.truck, "last_service_km": 480000, "odometer_km": 520000}]}
+            self.assertEqual(call("POST", "/api/truck-km", json.dumps(km).encode(), write)[0], 200)
+            self.assertEqual(call("POST", "/api/truck-service", json.dumps({"id": self.truck, "km": 540500, "day": "2026-12-02"}).encode(), write)[0], 200)
+            with connect(self.database) as db:
+                truck = app.item(db, "trucks", self.truck)
+            self.assertEqual((truck["last_service_km"], truck["service_due_km"], truck["plate"]), (540500, 600500, "TEST-001"))
         finally:
             server.shutdown()
             server.server_close()

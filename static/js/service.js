@@ -2,7 +2,7 @@
 // ---------------------------------------------------------------- Tractor maintenance (oil change every 60,000 km)
 // Per tractor: km of the last change and the km read at the end of the month. Next change = last + 60,000;
 // km left = next − km now. The reading before the last one gives the km per month, so the day can be estimated.
-// The workshop account (role "service") sees this page and ITV only, read only.
+// The workshop account (role "service") sees this page and ITV only: it enters the km here, nothing else.
 const SERVICE_WARN_KM=5000;let kmEditing=false;
 const thousands=n=>Math.round(n).toLocaleString('de-DE');
 const isService=()=>state?.role==='service';
@@ -28,17 +28,17 @@ const truckDriverName=t=>t.driver_name??state.drivers.find(d=>d.id===t.driver_id
 function maintenanceView(){const list=[...serviceTrucks()].sort((a,b)=>{const x=truckService(a),y=truckService(b);return x.rank-y.rank||x.left-y.left||a.plate.localeCompare(b.plate);});
   const count=key=>list.filter(t=>truckService(t).key===key).length;
   const chips=`<div class="service-chips"><span class="service-chip overdue"><strong>${count('overdue')}</strong> overdue</span><span class="service-chip soon"><strong>${count('soon')}</strong> within ${thousands(SERVICE_WARN_KM)} km</span><span class="service-chip ok"><strong>${count('ok')}</strong> ok</span>${count('unknown')?`<span class="service-chip unknown"><strong>${count('unknown')}</strong> without km</span>`:''}</div>`;
-  const actions=isService()?`<button class="btn small" data-action="print-page">🖨 Print</button>`:kmEditing?'':`<button class="btn small" data-action="print-page">🖨 Print</button><button class="btn primary" data-action="km-edit">✎ Enter month-end km</button>`;
+  const actions=kmEditing?'':`<button class="btn small" data-action="print-page">🖨 Print</button><button class="btn primary" data-action="km-edit">✎ Enter month-end km</button>`;
   const head=`<div class="heading"><div><h1>Maintenance</h1><p class="subtitle">Oil change every ${thousands(60000)} km. Next change = last change + ${thousands(60000)} km · km left = next change − km now.</p></div><div class="actions">${actions}</div></div>`;
-  if(kmEditing&&!isService())return head+kmEditHtml(list);
+  if(kmEditing)return head+kmEditHtml(list);
   const rows=list.map(t=>{const s=truckService(t),done=s.key==='unknown'?0:Math.min(100,Math.max(0,Math.round((1-s.left/s.every)*100)));
     return `<tr class="${s.key}"><td><strong class="service-plate">${esc(t.plate)}</strong><small>${esc(truckDriverName(t)||'—')}</small></td>
     <td class="num">${t.last_service_km!=null?thousands(t.last_service_km):'—'}</td><td class="num"><strong>${s.next!=null?thousands(s.next):'—'}</strong></td>
     <td class="num">${t.odometer_km!=null?thousands(t.odometer_km):'—'}${t.odometer_on?`<small class="${s.old?'stale':''}">${fmtDate(t.odometer_on)}</small>`:''}</td>
     <td class="service-left"><strong>${s.key==='unknown'?'—':s.left<=0?'−'+thousands(-s.left):thousands(s.left)}</strong>${s.key!=='unknown'?`<progress class="service-bar" max="100" value="${done}"></progress>`:''}</td>
     <td>${serviceBadge(t)}${s.when?`<small>≈ ${monthYear(s.when)}${s.monthly?` · ${thousands(s.monthly)} km/month`:''}</small>`:s.key==='overdue'?'<small>Change as soon as possible</small>':''}</td>
-    ${isService()?'':`<td class="clients-actions">${s.key!=='unknown'?`<button class="btn small" data-action="service-done" data-id="${t.id}">✓ Change done</button>`:''}<button class="btn small" data-action="edit-truck" data-id="${t.id}">Edit</button></td>`}</tr>`;}).join('');
-  return head+chips+`<section class="panel"><div class="schedule"><table class="clients-table service-table"><thead><tr><th>Tractor</th><th class="num">Last change (km)</th><th class="num">Next change (km)</th><th class="num">Km now</th><th>Km left</th><th>Status</th>${isService()?'':'<th></th>'}</tr></thead><tbody>${rows||`<tr><td colspan="7">${empty('No tractors','Add tractors under Tractors.','','')}</td></tr>`}</tbody></table></div></section>
+    <td class="clients-actions"><button class="btn small" data-action="service-done" data-id="${t.id}">✓ Change done</button>${isService()?'':`<button class="btn small" data-action="edit-truck" data-id="${t.id}">Edit</button>`}</td></tr>`;}).join('');
+  return head+chips+`<section class="panel"><div class="schedule"><table class="clients-table service-table"><thead><tr><th>Tractor</th><th class="num">Last change (km)</th><th class="num">Next change (km)</th><th class="num">Km now</th><th>Km left</th><th>Status</th><th></th></tr></thead><tbody>${rows||`<tr><td colspan="7">${empty('No tractors','Add tractors under Tractors.','','')}</td></tr>`}</tbody></table></div></section>
   <p class="subtitle key-note">Km now: read at the end of the month (date under the km, in orange when older than 40 days). ≈ month: from the km done between the last two readings.</p>`;}
 // The month-end list: last change and km now for every tractor, saved together with the day of the reading.
 function kmEditHtml(list){return `<form id="km-form"><section class="panel padded">${errorBox}<div class="km-day">${field('Day of the reading','day',dayOf(state.now),'date','required','Usually the last day of the month.')}</div>

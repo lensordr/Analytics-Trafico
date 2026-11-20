@@ -42,6 +42,8 @@ from upcoming import weekly_availability
 
 ROOT = Path(__file__).resolve().parent
 TOKEN = secrets.token_urlsafe(32)
+# What the workshop account may save: the km of the oil changes and the month-end km, nothing else.
+SERVICE_POSTS = {"/api/truck-km", "/api/truck-service"}
 # What the workshop account (SERVICE_USERS) sees of each tractor: the plate and its maintenance, nothing else.
 SERVICE_TRUCK_FIELDS = ("id", "plate", "operation", "active", "archived_at", "driver_id", "last_service_km", "service_every_km",
                         "service_due_km", "odometer_km", "odometer_on", "prev_odometer_km", "prev_odometer_on")
@@ -534,8 +536,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_body(401,{"error":"Please sign in again."})
         if not self.valid_host() or not secrets.compare_digest(self.headers.get("X-CSRF-Token",""),TOKEN):
             return self.send_body(403,{"error":"Please reload the app and try again."})
-        if self.service_user():
-            return self.send_body(403,{"error":"This account can only see ITV and maintenance."})
+        if self.service_user() and urlsplit(self.path).path not in SERVICE_POSTS:
+            return self.send_body(403,{"error":"This account can only see ITV and enter the maintenance km."})
         try:
             length = int(self.headers.get("Content-Length","0"))
             limit = 3_000_000 if urlsplit(self.path).path in ("/api/itv-import", "/api/witruck-import") else 100000
