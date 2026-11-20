@@ -34,7 +34,7 @@ function maintenanceView(){const list=[...serviceTrucks()].sort((a,b)=>{const x=
   const head=`<div class="heading"><div><h1>${L('Maintenance','Mentenanță')}</h1><p class="subtitle">${L(`Oil change every ${thousands(60000)} km. Next change = last change + ${thousands(60000)} km · km left = next change − km now.`,`Schimb de ulei la fiecare ${thousands(60000)} km. Următorul schimb = ultimul schimb + ${thousands(60000)} km · km rămași = următorul schimb − km actuali.`)}</p></div><div class="actions">${actions}</div></div>`;
   if(kmEditing)return head+kmEditHtml(list);
   const rows=list.map(t=>{const s=truckService(t),done=s.key==='unknown'?0:Math.min(100,Math.max(0,Math.round((1-s.left/s.every)*100)));
-    return `<tr class="${s.key}"><td><strong class="service-plate">${esc(t.plate)}</strong><small>${esc(truckDriverName(t)||'—')}</small></td>
+    return `<tr class="${s.key} km-click" data-action="km-truck" data-id="${t.id}" title="${L('Click to change the km','Click ca să modifici km')}"><td><strong class="service-plate">${esc(t.plate)}</strong><small>${esc(truckDriverName(t)||'—')}</small></td>
     <td class="num">${t.last_service_km!=null?thousands(t.last_service_km):'—'}</td><td class="num"><strong>${s.next!=null?thousands(s.next):'—'}</strong></td>
     <td class="num">${t.odometer_km!=null?thousands(t.odometer_km):'—'}${t.odometer_on?`<small class="${s.old?'stale':''}">${fmtDate(t.odometer_on)}</small>`:''}</td>
     <td class="service-left"><strong>${s.key==='unknown'?'—':s.left<=0?'−'+thousands(-s.left):thousands(s.left)}</strong>${s.key!=='unknown'?`<progress class="service-bar" max="100" value="${done}"></progress>`:''}</td>
@@ -59,6 +59,19 @@ function serviceFormHtml(item){const v=k=>item[k]??'';
   field('Last change at (km)','last_service_km',v('last_service_km'),'number','step="1" min="0" max="5000000" placeholder="e.g. 480000"','The km when the oil was changed last time.')+
   field('Km now','odometer_km',v('odometer_km'),'number','step="1" min="0" max="5000000" placeholder="e.g. 512300"',item.odometer_on?`Read ${fmtDate(item.odometer_on)}. A new value is dated today.`:'Saved with today’s date.')+
   field('Change every (km)','service_every_km',item.service_every_km||60000,'number','step="1" min="1000" max="500000"','Next change = last change + this.');}
+// One tractor at a time: click its row to write the km of the last change and the km now.
+function kmTruckModal(id){const t=state.trucks.find(x=>x.id===Number(id));if(!t)return;const every=t.service_every_km||60000;
+  showModal(t.plate+(truckDriverName(t)?' · '+truckDriverName(t):''),`<form id="km-truck-form" data-id="${t.id}">${errorBox}<div class="form-grid">
+  ${field(L('Last change at (km)','Ultimul schimb la (km)'),'last_service_km',t.last_service_km??'','number','step="1" min="0" max="5000000" inputmode="numeric"',L('The km when the oil was changed.','Km la care s-a făcut schimbul de ulei.'))}
+  ${field(L('Km now','Km actuali'),'odometer_km',t.odometer_km??'','number','step="1" min="0" max="5000000" inputmode="numeric"',t.odometer_on?L(`Last read ${fmtDate(t.odometer_on)}.`,`Ultima citire ${fmtDate(t.odometer_on)}.`):'')}
+  ${field(L('Day of the reading','Data citirii'),'day',dayOf(state.now),'date','required')}<div class="field"><label>${L('Next change','Următorul schimb')}</label><p class="km-preview" id="km-truck-next"></p></div></div>
+  <div class="form-actions"><button type="button" class="btn" data-action="close">${L('Cancel','Renunță')}</button><button class="btn primary" type="submit">${L('Save','Salvează')}</button></div></form>`,L('MAINTENANCE','MENTENANȚĂ'));
+  kmTruckPreview($('#km-truck-form'));$('#f-last_service_km')?.focus();}
+function kmTruckPreview(form){const t=state.trucks.find(x=>x.id===Number(form.dataset.id)),out=$('#km-truck-next');if(!t||!out)return;
+  const last=Number(form.elements.last_service_km.value),odo=Number(form.elements.odometer_km.value),next=last?last+(t.service_every_km||60000):null;
+  out.innerHTML=next?`<strong>${thousands(next)} km</strong>${odo?` · ${odo>=next?L('overdue by ','depășit cu ')+thousands(odo-next)+' km':L(thousands(next-odo)+' km left','mai sunt '+thousands(next-odo)+' km')}`:''}`:'—';}
+async function saveKmTruck(form){const data=formObject(form);const result=await api('/api/truck-km',{day:data.day,lang:L('en','ro'),items:[{id:Number(form.dataset.id),last_service_km:data.last_service_km,odometer_km:data.odometer_km}]});
+  $('#modal').close();await refresh();toast(result.message);}
 function serviceDoneModal(id){const t=state.trucks.find(x=>x.id===Number(id));if(!t)return;
   showModal(L('Oil change done · ','Schimb de ulei făcut · ')+t.plate,`<form id="service-form" data-id="${t.id}">${errorBox}<div class="form-grid">${field(L('Km at the change','Km la schimb'),'km',t.odometer_km??'','number','required step="1" min="0" max="5000000"',L('It becomes the last change.','Devine ultimul schimb.'))}${field(L('Day of the change','Data schimbului'),'day',dayOf(state.now),'date','required')}</div>
   <p class="subtitle">${L(`The next change will be at this km + ${thousands(t.service_every_km||60000)} km.`,`Următorul schimb va fi la acești km + ${thousands(t.service_every_km||60000)} km.`)}</p><div class="form-actions"><button type="button" class="btn" data-action="close">${L('Cancel','Renunță')}</button><button class="btn primary" type="submit">${L('Save','Salvează')}</button></div></form>`,L('MAINTENANCE','MENTENANȚĂ'));}

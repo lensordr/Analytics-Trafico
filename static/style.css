@@ -292,3 +292,4 @@ tr.soon .service-bar{color:#f59e0b}tr.overdue .service-bar{color:#d92d20}
 .role-service .itv-row .actions,.role-service [data-action="new-itv"],.role-service .itv-import{display:none!important}
 @media(prefers-reduced-motion:reduce){#nav-service{animation:none!important}}
 @media print{.service-table tr.overdue,.service-table tr.soon{box-shadow:none}}
+.service-table tr.km-click{cursor:pointer}.service-table tr.km-click:hover{background:#f4f8f1}.km-preview{margin:8px 0 0;font-size:14px}
