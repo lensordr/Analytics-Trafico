@@ -81,7 +81,7 @@ def _km(data, key, label):
 
 
 def _day(data, key="day"):
-    day = text(data, key, False, 10) or _today()
+    day = text(data, key, False, 10) if data.get(key) else _today()
     try:
         datetime.strptime(day, "%Y-%m-%d")
     except ValueError:
@@ -138,6 +138,8 @@ def save_km_list(db, data):
     changed = 0
     for row in rows:
         truck = item(db, "trucks", row.get("id"))
+        if not truck.get("own_fleet"):
+            continue  # an autonomo's tractor: not on the maintenance list
         row = {**row, "lang": data.get("lang")}
         last = _km(row, "last_service_km", f"{truck['plate']} " + ("ultimul schimb" if ro else "last change"))
         odometer = _km(row, "odometer_km", f"{truck['plate']} " + ("km actuali" if ro else "km now"))
@@ -154,6 +156,8 @@ def service_done(db, data):
     """The oil change was done at `km`: it becomes the last change (and the km now, if higher)."""
     truck = item(db, "trucks", data.get("id"))
     ro = _ro(data)
+    if not truck.get("own_fleet"):
+        raise ValueError("Acest tractor nu e pe lista de mentenanță." if ro else "This tractor is not on the maintenance list (not ours).")
     km = _km(data, "km", "Km la schimb" if ro else "Km at the change")
     if km is None:
         raise ValueError("Scrie km la schimb." if ro else "Write the km at the change.")
@@ -224,6 +228,9 @@ def save_master(db, kind, data):
         for key, default, low, high in [("height",4,.5,6),("width",2.55,.5,4),("length",16.5,2,30),("weight",40000,1000,100000)]:
             values[key] = number(data, key, default, low, high)
         values.update(service_values(db, data))
+        # Malcom's own tractor (not an autonomo's): only these are on the Maintenance page and the workshop's list.
+        if "own_fleet" in data:
+            values["own_fleet"] = 1 if data["own_fleet"] else 0
     else:
         raise ValueError("Unknown resource.")
     if kind in ("trucks", "trailers"):

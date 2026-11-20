@@ -47,7 +47,7 @@ TOKEN = secrets.token_urlsafe(32)
 PWA_FILES = ("/manifest.webmanifest", "/sw.js", "/icon-180.png", "/icon-192.png", "/icon-512.png")
 SERVICE_POSTS = {"/api/truck-km", "/api/truck-service"}
 # What the workshop account (SERVICE_USERS) sees of each tractor: the plate and its maintenance, nothing else.
-SERVICE_TRUCK_FIELDS = ("id", "plate", "operation", "active", "archived_at", "driver_id", "last_service_km", "service_every_km",
+SERVICE_TRUCK_FIELDS = ("id", "plate", "operation", "active", "archived_at", "driver_id", "own_fleet", "last_service_km", "service_every_km",
                         "service_due_km", "odometer_km", "odometer_on", "prev_odometer_km", "prev_odometer_on")
 COMPRESSIBLE = {"application/json", "text/html", "text/javascript", "text/css"}
 
@@ -259,7 +259,7 @@ class Handler(BaseHTTPRequestHandler):
         with connect(self.server.database) as db:
             drivers = {row["id"]: row["name"] for row in db.execute("SELECT id, name FROM drivers")}
             trucks = [{key: t[key] for key in SERVICE_TRUCK_FIELDS} | {"driver_name": drivers.get(t["driver_id"], "")}
-                      for t in rows(db, "trucks") if not t["archived_at"]]
+                      for t in rows(db, "trucks") if not t["archived_at"] and t["own_fleet"]]
             itv = rows(db, "itv_vehicles")
         return {"role": "service", "trucks": trucks, "itv": itv, "drivers": [], "trailers": [], "locations": [], "orders": [],
                 "materials": [], "tariffs": [], "settings": {}, "link_opens": {}, "eta_reports": [], "load_requests": [],

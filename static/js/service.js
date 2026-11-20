@@ -20,12 +20,13 @@ function truckService(t){const every=t.service_every_km||60000;
   return {...base,key:'ok',rank:2,label:L(`${thousands(left)} km left`,`Mai sunt ${thousands(left)} km`)};}
 const monthYear=d=>d.toLocaleDateString(L('en-GB','ro-RO'),{month:'long',year:'numeric'});
 function serviceBadge(t){const s=truckService(t);return `<span class="badge itv-badge ${s.key==='overdue'?'expired':s.key}">${s.key==='overdue'?'⚠ ':s.key==='soon'?'🔧 ':''}${esc(s.label)}</span>`;}
-const serviceTrucks=()=>(state.trucks||[]).filter(t=>!t.archived_at&&t.active!==0);
+// Only Malcom's own tractors (ticked "Our tractor" on Tractors), not the autonomos'.
+const serviceTrucks=()=>(state.trucks||[]).filter(t=>!t.archived_at&&t.active!==0&&t.own_fleet);
 const serviceDue=()=>serviceTrucks().filter(t=>['overdue','soon'].includes(truckService(t).key));
 function updateServiceCount(){const el=$('#nav-service');if(!el||!state)return;const due=serviceDue(),overdue=due.filter(t=>truckService(t).key==='overdue').length;
   el.hidden=!due.length;el.textContent=due.length;el.className=overdue?'overdue':'soon';el.title=L(`Oil change: ${overdue} overdue · ${due.length-overdue} within ${thousands(SERVICE_WARN_KM)} km`,`Schimb ulei: ${overdue} depășite · ${due.length-overdue} sub ${thousands(SERVICE_WARN_KM)} km`);}
 // One line on a tractor card (Tractors page, dispatchers only).
-function serviceCardHtml(t){const s=truckService(t);return `<div class="service-line ${s.key}">${serviceBadge(t)}${s.key!=='unknown'?`<small>Next change at <strong>${thousands(s.next)} km</strong> · km ${thousands(t.odometer_km)} on ${fmtDate(t.odometer_on)}</small>`:''}</div>`;}
+function serviceCardHtml(t){if(!t.own_fleet)return '';const s=truckService(t);return `<div class="service-line ${s.key}">${serviceBadge(t)}${s.key!=='unknown'?`<small>Next change at <strong>${thousands(s.next)} km</strong> · km ${thousands(t.odometer_km)} on ${fmtDate(t.odometer_on)}</small>`:''}</div>`;}
 const truckDriverName=t=>t.driver_name??state.drivers.find(d=>d.id===t.driver_id)?.name??'';
 function maintenanceView(){const list=[...serviceTrucks()].sort((a,b)=>{const x=truckService(a),y=truckService(b);return x.rank-y.rank||x.left-y.left||a.plate.localeCompare(b.plate);});
   const count=key=>list.filter(t=>truckService(t).key===key).length;
@@ -40,7 +41,7 @@ function maintenanceView(){const list=[...serviceTrucks()].sort((a,b)=>{const x=
     <td class="service-left"><strong>${s.key==='unknown'?'—':s.left<=0?'−'+thousands(-s.left):thousands(s.left)}</strong>${s.key!=='unknown'?`<progress class="service-bar" max="100" value="${done}"></progress>`:''}</td>
     <td>${serviceBadge(t)}${s.when?`<small>≈ ${monthYear(s.when)}${s.monthly?` · ${thousands(s.monthly)} ${L('km/month','km/lună')}`:''}</small>`:s.key==='overdue'?`<small>${L('Change as soon as possible','De schimbat cât mai repede')}</small>`:''}</td>
     <td class="clients-actions"><button class="btn small" data-action="service-done" data-id="${t.id}">✓ ${L('Change done','Schimb făcut')}</button>${isService()?'':`<button class="btn small" data-action="edit-truck" data-id="${t.id}">Edit</button>`}</td></tr>`;}).join('');
-  return head+chips+`<section class="panel"><div class="schedule"><table class="clients-table service-table"><thead><tr><th>${L('Tractor','Tractor')}</th><th class="num">${L('Last change (km)','Ultimul schimb (km)')}</th><th class="num">${L('Next change (km)','Următorul schimb (km)')}</th><th class="num">${L('Km now','Km actuali')}</th><th>${L('Km left','Km rămași')}</th><th>${L('Status','Stare')}</th><th></th></tr></thead><tbody>${rows||`<tr><td colspan="7">${empty(L('No tractors','Niciun tractor'),'','','')}</td></tr>`}</tbody></table></div></section>
+  return head+chips+`<section class="panel"><div class="schedule"><table class="clients-table service-table"><thead><tr><th>${L('Tractor','Tractor')}</th><th class="num">${L('Last change (km)','Ultimul schimb (km)')}</th><th class="num">${L('Next change (km)','Următorul schimb (km)')}</th><th class="num">${L('Km now','Km actuali')}</th><th>${L('Km left','Km rămași')}</th><th>${L('Status','Stare')}</th><th></th></tr></thead><tbody>${rows||`<tr><td colspan="7">${empty(L('No tractors','Niciun tractor'),L('Tick “Our tractor” in Tractors → Edit & assign → Maintenance.',''),'','')}</td></tr>`}</tbody></table></div></section>
   <p class="subtitle key-note">${L('Km now: read at the end of the month (date under the km, in orange when older than 40 days). ≈ month: from the km done between the last two readings.','Km actuali: citiți la sfârșitul lunii (data e sub km, cu portocaliu dacă are peste 40 de zile). ≈ luna: din km făcuți între ultimele două citiri.')}</p>`;}
 // The month-end list: last change and km now for every tractor, saved together with the day of the reading.
 function kmEditHtml(list){return `<form id="km-form"><section class="panel padded">${errorBox}<div class="km-day">${field(L('Day of the reading','Data citirii'),'day',dayOf(state.now),'date','required',L('Usually the last day of the month.','De obicei ultima zi a lunii.'))}</div>
@@ -55,7 +56,7 @@ function kmRowInput(input){const row=input.closest('[data-km-row]');if(!row)retu
 async function saveKmList(form){const data=formObject(form);const items=serviceTrucks().map(t=>({id:t.id,last_service_km:data['last_'+t.id]??'',odometer_km:data['odo_'+t.id]??''}));
   const result=await api('/api/truck-km',{day:data.day,items,lang:L('en','ro')});kmEditing=false;await refresh();toast(result.message);}
 function serviceFormHtml(item){const v=k=>item[k]??'';
-  return `<div class="span-2 section-title">Maintenance · oil change</div>`+
+  return `<div class="span-2 section-title">Maintenance · oil change</div><label class="checkbox span-2"><input type="checkbox" name="own_fleet" ${item.own_fleet?'checked':''}>Our tractor (Malcom, not an autonomo) · shown on Maintenance and to the workshop</label>`+
   field('Last change at (km)','last_service_km',v('last_service_km'),'number','step="1" min="0" max="5000000" placeholder="e.g. 480000"','The km when the oil was changed last time.')+
   field('Km now','odometer_km',v('odometer_km'),'number','step="1" min="0" max="5000000" placeholder="e.g. 512300"',item.odometer_on?`Read ${fmtDate(item.odometer_on)}. A new value is dated today.`:'Saved with today’s date.')+
   field('Change every (km)','service_every_km',item.service_every_km||60000,'number','step="1" min="1000" max="500000"','Next change = last change + this.');}

@@ -499,7 +499,8 @@ def initialize(target):
         columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(trucks)")}
         for column, kind in (("service_due_km", "REAL"), ("odometer_km", "REAL"), ("odometer_on", "TEXT"),
                              ("monthly_km", "REAL"), ("service_every_km", "REAL NOT NULL DEFAULT 60000"),
-                             ("last_service_km", "REAL"), ("prev_odometer_km", "REAL"), ("prev_odometer_on", "TEXT")):
+                             ("last_service_km", "REAL"), ("prev_odometer_km", "REAL"), ("prev_odometer_on", "TEXT"),
+                             ("own_fleet", "INTEGER NOT NULL DEFAULT 0")):  # 1 = Malcom's own tractor: on the Maintenance page
             if column not in columns:
                 db.execute(f"ALTER TABLE trucks ADD COLUMN {column} {kind}")
                 if column == "last_service_km":  # the first version saved the next change: the last one is 60,000 km before

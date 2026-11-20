@@ -1037,8 +1037,11 @@ class DispatchTests(unittest.TestCase):
         base = {"id":self.truck,"plate":"TEST-001","trailer_id":"","operation":"International","location_id":self.a}
         with connect(self.database) as db:
             truck = app.item(db,"trucks",self.truck)
-            self.assertEqual((truck["service_every_km"], truck["last_service_km"], truck["odometer_on"]), (60000, None, None))
-            app.save_master(db,"trucks",{**base,"last_service_km":"480000","odometer_km":"512300","service_every_km":""})
+            self.assertEqual((truck["service_every_km"], truck["last_service_km"], truck["odometer_on"], truck["own_fleet"]), (60000, None, None, 0))
+            with self.assertRaisesRegex(ValueError, "not on the maintenance list"):  # an autonomo's tractor
+                service_done(db,{"id":self.truck,"km":"1000"})
+            app.save_master(db,"trucks",{**base,"own_fleet":True,"last_service_km":"480000","odometer_km":"512300","service_every_km":""})
+            self.assertEqual(app.item(db,"trucks",self.truck)["own_fleet"], 1)
             truck = app.item(db,"trucks",self.truck)
             self.assertEqual((truck["last_service_km"], truck["service_due_km"], truck["odometer_km"], truck["odometer_on"]),
                              (480000, 540000, 512300, _today()))
@@ -1073,7 +1076,8 @@ class DispatchTests(unittest.TestCase):
         from auth import Auth
         import http.client
         with connect(self.database) as db:
-            db.execute("UPDATE trucks SET last_service_km=480000, odometer_km=512300 WHERE id=?", (self.truck,))
+            db.execute("UPDATE trucks SET last_service_km=480000, odometer_km=512300, own_fleet=1 WHERE id=?", (self.truck,))
+            other = app.save_master(db,"trucks",{"plate":"AUTONOMO-1","operation":"Local","location_id":self.a})
         users = {"malcom1": "first-secret-1", "service": "workshop-secret-1"}
         server = app.ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)
         server.database = self.database
@@ -1100,6 +1104,7 @@ class DispatchTests(unittest.TestCase):
             truck = next(t for t in state["trucks"] if t["id"] == self.truck)
             self.assertEqual((truck["plate"], truck["last_service_km"], truck["driver_name"]), ("TEST-001", 480000, "Test Driver"))
             self.assertNotIn("location_id", truck)
+            self.assertNotIn(other, [t["id"] for t in state["trucks"]])  # the autonomos' tractors are not on their list
             self.assertIn("itv", state)
             self.assertEqual(json.loads(call("GET", "/api/state", headers=sessions["malcom1"])[2])["role"], "dispatcher")
             # Read only: no save, no backup, no PDF.
