@@ -163,4 +163,6 @@ $('#close-modal').addEventListener('click',()=>$('#modal').close());
 // Every minute: fetch the latest data so delivery alerts appear on time (not while a form is open or a field is in use).
 setInterval(async()=>{if(!state||document.hidden)return;if($('#modal').open||kmEditing||document.activeElement?.matches?.('input,select,textarea')){updateAlertCount();return;}
   try{if(!await loadState()){updateAlertCount();return;}$('#nav-count').textContent=state.orders.filter(x=>x.status==='Planned'||x.status==='In transit').length;if(view==='board'||view==='planner')render();else{updateAlertCount();updateItvCount();}}catch(error){}},60000);
+// Installable app: opens from the home screen in its own window (the worker caches nothing).
+if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
 refresh().catch(error=>{$('#main').innerHTML=empty('Could not connect to the local server',esc(error.message));toast(error.message,true);});

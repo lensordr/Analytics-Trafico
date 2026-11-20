@@ -43,6 +43,8 @@ from upcoming import weekly_availability
 ROOT = Path(__file__).resolve().parent
 TOKEN = secrets.token_urlsafe(32)
 # What the workshop account may save: the km of the oil changes and the month-end km, nothing else.
+# Installable app (PWA): the manifest, its icons and the service worker load before signing in.
+PWA_FILES = ("/manifest.webmanifest", "/sw.js", "/icon-180.png", "/icon-192.png", "/icon-512.png")
 SERVICE_POSTS = {"/api/truck-km", "/api/truck-service"}
 # What the workshop account (SERVICE_USERS) sees of each tractor: the plate and its maintenance, nothing else.
 SERVICE_TRUCK_FIELDS = ("id", "plate", "operation", "active", "archived_at", "driver_id", "last_service_km", "service_every_km",
@@ -459,7 +461,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("X-Robots-Tag", "noindex")
             self.end_headers()
             return self.wfile.write(body)
-        if path not in ("/style.css","/driver.css","/client.css","/client.js") and not self.signed_in():
+        if path not in ("/style.css","/driver.css","/client.css","/client.js")+PWA_FILES and not self.signed_in():
             return self.send_body(401,{"error":"Please sign in again."}) if path.startswith("/api/") else self.redirect("/login")
         if self.service_user() and path.startswith(("/api/", "/tiles/")) and path != "/api/state":
             return self.send_body(403, {"error": "This account can only see ITV and maintenance."})
@@ -512,7 +514,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control","no-store")
             self.end_headers()
             return self.wfile.write(body)
-        files = {"/":("index.html","text/html; charset=utf-8"),"/analytics.js":("analytics.js","text/javascript; charset=utf-8"),"/search-select.js":("search-select.js","text/javascript; charset=utf-8"),"/style.css":("style.css","text/css; charset=utf-8"),"/driver.css":("driver.css","text/css; charset=utf-8"),"/client.css":("client.css","text/css; charset=utf-8"),"/client.js":("client.js","text/javascript; charset=utf-8")}
+        files = {"/manifest.webmanifest":("manifest.webmanifest","application/manifest+json"),"/sw.js":("sw.js","text/javascript; charset=utf-8"),
+                 "/icon-180.png":("icon-180.png","image/png"),"/icon-192.png":("icon-192.png","image/png"),"/icon-512.png":("icon-512.png","image/png"),
+                 "/":("index.html","text/html; charset=utf-8"),"/analytics.js":("analytics.js","text/javascript; charset=utf-8"),"/search-select.js":("search-select.js","text/javascript; charset=utf-8"),"/style.css":("style.css","text/css; charset=utf-8"),"/driver.css":("driver.css","text/css; charset=utf-8"),"/client.css":("client.css","text/css; charset=utf-8"),"/client.js":("client.js","text/javascript; charset=utf-8")}
         # Interface modules: static/js/<name>.js (names checked, so no other file can be read).
         if re.fullmatch(r"/js/[a-z][a-z-]*\.js", path) and (ROOT/"static"/path.lstrip("/")).is_file():
             return self.send_static(ROOT/"static"/path.lstrip("/"),"text/javascript; charset=utf-8")
