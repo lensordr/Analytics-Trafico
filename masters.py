@@ -53,6 +53,48 @@ def selected_trailer(db, data, create=False):
     return trailer
 
 
+SERVICE_FIELDS = (("service_due_km", 0, 5_000_000), ("odometer_km", 0, 5_000_000), ("monthly_km", 0, 50_000),
+                  ("service_every_km", 1_000, 500_000))
+
+
+def _today():
+    from planner import ZONE
+    return datetime.now(UTC).astimezone(ZONE).date().isoformat()
+
+
+def service_values(db, data):
+    """Maintenance fields of the tractor form. An older open form may not send them: keep what is saved.
+    The odometer reading is dated today when it changes, so the km done since can be estimated."""
+    saved = item(db, "trucks", data["id"]) if data.get("id") else {}
+    values = {}
+    for key, low, high in SERVICE_FIELDS:
+        if key not in data:
+            values[key] = saved.get(key, 60000 if key == "service_every_km" else None)
+        elif data[key] in (None, ""):
+            values[key] = 60000 if key == "service_every_km" else None
+        else:
+            values[key] = round(number(data, key, None, low, high))
+    changed = values["odometer_km"] is not None and values["odometer_km"] != saved.get("odometer_km")
+    values["odometer_on"] = _today() if changed else (saved.get("odometer_on") if values["odometer_km"] is not None else None)
+    return values
+
+
+def service_done(db, data):
+    """The service was done: the odometer then (km) becomes the last reading and the next one is due
+    `service_every_km` later."""
+    truck = item(db, "trucks", data.get("id"))
+    km = round(number(data, "km", None, 0, 5_000_000))
+    day = text(data, "day", False, 10) or _today()
+    try:
+        datetime.strptime(day, "%Y-%m-%d")
+    except ValueError:
+        raise ValueError("Choose the day of the service.")
+    every = round(truck.get("service_every_km") or 60000)
+    db.execute("UPDATE trucks SET odometer_km=?, odometer_on=?, service_due_km=? WHERE id=?",
+               (km, day, km + every, truck["id"]))
+    return {"message": f"Service of {truck['plate']} saved at {km:,} km. Next one at {km + every:,} km.".replace(",", ".")}
+
+
 def save_master(db, kind, data):
     if kind == "drivers":
         document = text(data, "dni_nie", False, 30).upper()
@@ -109,6 +151,7 @@ def save_master(db, kind, data):
                   "operation": operation, "active": 1 if data.get("active", True) else 0}
         for key, default, low, high in [("height",4,.5,6),("width",2.55,.5,4),("length",16.5,2,30),("weight",40000,1000,100000)]:
             values[key] = number(data, key, default, low, high)
+        values.update(service_values(db, data))
     else:
         raise ValueError("Unknown resource.")
     if kind in ("trucks", "trailers"):

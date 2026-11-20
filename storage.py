@@ -494,6 +494,13 @@ def initialize(target):
             status TEXT NOT NULL DEFAULT 'New', reason TEXT NOT NULL DEFAULT '', order_ids TEXT NOT NULL DEFAULT '[]',
             handled_at TEXT, handled_by TEXT NOT NULL DEFAULT '')""")
         db.execute("CREATE INDEX IF NOT EXISTS load_requests_client ON load_requests(client_id, created_at)")
+        # Maintenance (oil and filters every ~60,000 km): the km of the next service, the last odometer reading
+        # and its date, and the km the tractor does in a month, to estimate how many km are left today.
+        columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(trucks)")}
+        for column, kind in (("service_due_km", "REAL"), ("odometer_km", "REAL"), ("odometer_on", "TEXT"),
+                             ("monthly_km", "REAL"), ("service_every_km", "REAL NOT NULL DEFAULT 60000")):
+            if column not in columns:
+                db.execute(f"ALTER TABLE trucks ADD COLUMN {column} {kind}")
         # Witruck history (imported CSV exports): every trip of the last months, own trucks and partners.
         db.execute("""CREATE TABLE IF NOT EXISTS market_trips (
             route_no INTEGER PRIMARY KEY, day TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '',

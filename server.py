@@ -30,7 +30,7 @@ from names import apply_name_fixes, name_fixes
 from market import import_witruck, key_clients
 from driverlinks import driver_deca, driver_link, driver_order, eta_reports, link_opens, mark_opened, report_delay
 from itv import delete_itv, import_itv, save_itv
-from masters import archive_master, restore_master, save_master
+from masters import archive_master, restore_master, save_master, service_done
 from materials import delete_material, save_material
 from tariffs import delete_tariff, save_tariff
 from nearby import log_contact, nearby_companies
@@ -576,6 +576,8 @@ class Handler(BaseHTTPRequestHandler):
                     result = {"matches":routing.geocode(text(data,"query",True,600))}
                 elif path == "/api/upcoming":
                     result = weekly_availability(db,data)
+                elif path == "/api/truck-service":
+                    result = service_done(db,data)
                 elif path == "/api/itv":
                     result = {"id":save_itv(db,data)}
                 elif path == "/api/itv-delete":

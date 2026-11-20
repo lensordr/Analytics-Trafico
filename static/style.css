@@ -277,3 +277,11 @@
 /* ---- Key clients (Witruck) */
 .key-clients{margin-bottom:16px}.key-table th.num,.key-table td.num{text-align:right;white-space:nowrap}.key-note{padding:0 16px 12px}
 .key-lanes{border-color:#e6d9a8;background:#fffcf2}.key-lanes .lane{font-size:11px;margin-left:6px}.key-lanes small.inline{display:inline;margin:0;color:var(--muted)}.key-lanes .partner{color:#8a5a00}
+/* Tractor maintenance (every ~60,000 km) */
+#nav-trucks.overdue{background:#d92d20;color:#fff;animation:alert-blink-nav 1.2s ease-in-out infinite}#nav-trucks.soon{background:#f59e0b;color:#fff}
+.service-line{margin:4px 0 10px;display:grid;gap:5px}.service-line small{color:#66735f;font-size:10px;line-height:1.4}
+.service-bar{appearance:none;width:100%;height:6px;border:0;border-radius:4px;background:#eef1ec;overflow:hidden;color:#6e8c60}
+.service-bar::-webkit-progress-bar{background:#eef1ec}.service-bar::-webkit-progress-value{background:currentColor}.service-bar::-moz-progress-bar{background:currentColor}
+.service-line.soon .service-bar{color:#f59e0b}.service-line.overdue .service-bar{color:#d92d20}
+.service-alerts{margin-bottom:16px}.service-note{margin:0 0 12px}
+@media(prefers-reduced-motion:reduce){#nav-trucks{animation:none!important}}

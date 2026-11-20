@@ -1032,6 +1032,29 @@ class DispatchTests(unittest.TestCase):
             server.server_close()
             thread.join()
 
+    def test_tractor_maintenance_km_are_saved_and_service_done_sets_the_next(self):
+        from masters import _today, service_done
+        base = {"id":self.truck,"plate":"TEST-001","trailer_id":"","operation":"International","location_id":self.a}
+        with connect(self.database) as db:
+            truck = app.item(db,"trucks",self.truck)
+            self.assertEqual((truck["service_every_km"], truck["service_due_km"], truck["odometer_on"]), (60000, None, None))
+            app.save_master(db,"trucks",{**base,"service_due_km":"540000","odometer_km":"512300","monthly_km":"11000","service_every_km":""})
+            truck = app.item(db,"trucks",self.truck)
+            self.assertEqual((truck["service_due_km"], truck["odometer_km"], truck["monthly_km"], truck["service_every_km"], truck["odometer_on"]),
+                             (540000, 512300, 11000, 60000, _today()))
+            db.execute("UPDATE trucks SET odometer_on='2026-01-01' WHERE id=?", (self.truck,))
+            app.save_master(db,"trucks",{**base,"service_due_km":"540000","odometer_km":"512300","monthly_km":"12000"})
+            self.assertEqual(app.item(db,"trucks",self.truck)["odometer_on"], "2026-01-01")  # same reading: keeps its day
+            app.save_master(db,"trucks",{**base})  # an older form without the fields keeps them
+            self.assertEqual(app.item(db,"trucks",self.truck)["service_due_km"], 540000)
+            with self.assertRaises(ValueError):
+                app.save_master(db,"trucks",{**base,"odometer_km":"-5"})
+            self.assertIn("Next one at 601.000 km", service_done(db,{"id":self.truck,"km":"541000","day":"2026-11-20"})["message"])
+            truck = app.item(db,"trucks",self.truck)
+            self.assertEqual((truck["odometer_km"], truck["odometer_on"], truck["service_due_km"]), (541000, "2026-11-20", 601000))
+            with self.assertRaises(ValueError):
+                service_done(db,{"id":self.truck,"km":"541000","day":"20.11.2026"})
+
     def test_witruck_import_ranks_key_clients_and_lanes_near_a_truck(self):
         from datetime import datetime
         from market import import_witruck, key_clients, lanes_near, number, postal
