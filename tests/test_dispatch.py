@@ -1058,6 +1058,9 @@ class DispatchTests(unittest.TestCase):
             self.assertEqual(app.item(db,"trucks",self.truck)["prev_odometer_km"], 512300)
             with self.assertRaises(ValueError):
                 save_km_list(db,{"day":"30.11.2026","items":[{"id":self.truck,"odometer_km":"1"}]})
+            with self.assertRaisesRegex(ValueError, "mai mici decât km la ultimul schimb"):  # the workshop sees it in Romanian
+                save_km_list(db,{"day":"2026-11-30","lang":"ro","items":[{"id":self.truck,"last_service_km":"480000","odometer_km":"470000"}]})
+            self.assertEqual(save_km_list(db,{"day":"2026-11-30","lang":"ro","items":[{"id":self.truck,"last_service_km":"480000","odometer_km":"523000"}]})["message"], "Nimic schimbat.")
             with self.assertRaises(ValueError):
                 save_km_list(db,{"day":"2026-11-30","items":[{"id":self.truck,"odometer_km":"abc"}]})
             # The oil change is done: it becomes the last change, the next one is 60,000 km later.
