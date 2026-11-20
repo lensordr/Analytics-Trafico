@@ -53,8 +53,8 @@ def selected_trailer(db, data, create=False):
     return trailer
 
 
-SERVICE_FIELDS = (("service_due_km", 0, 5_000_000), ("odometer_km", 0, 5_000_000), ("monthly_km", 0, 50_000),
-                  ("service_every_km", 1_000, 500_000))
+SERVICE_EVERY = 60000
+MAX_KM = 5_000_000
 
 
 def _today():
@@ -62,37 +62,95 @@ def _today():
     return datetime.now(UTC).astimezone(ZONE).date().isoformat()
 
 
-def service_values(db, data):
-    """Maintenance fields of the tractor form. An older open form may not send them: keep what is saved.
-    The odometer reading is dated today when it changes, so the km done since can be estimated."""
-    saved = item(db, "trucks", data["id"]) if data.get("id") else {}
-    values = {}
-    for key, low, high in SERVICE_FIELDS:
-        if key not in data:
-            values[key] = saved.get(key, 60000 if key == "service_every_km" else None)
-        elif data[key] in (None, ""):
-            values[key] = 60000 if key == "service_every_km" else None
-        else:
-            values[key] = round(number(data, key, None, low, high))
-    changed = values["odometer_km"] is not None and values["odometer_km"] != saved.get("odometer_km")
-    values["odometer_on"] = _today() if changed else (saved.get("odometer_on") if values["odometer_km"] is not None else None)
-    return values
+def _km(data, key, label):
+    raw = data.get(key)
+    if raw in (None, ""):
+        return None
+    try:
+        value = round(float(str(raw).replace(" ", "")))
+    except ValueError:
+        raise ValueError(f"{label}: write the km as a number.")
+    if not 0 <= value <= MAX_KM:
+        raise ValueError(f"{label}: between 0 and {MAX_KM:,} km.".replace(",", "."))
+    return value
 
 
-def service_done(db, data):
-    """The service was done: the odometer then (km) becomes the last reading and the next one is due
-    `service_every_km` later."""
-    truck = item(db, "trucks", data.get("id"))
-    km = round(number(data, "km", None, 0, 5_000_000))
-    day = text(data, "day", False, 10) or _today()
+def _day(data, key="day"):
+    day = text(data, key, False, 10) or _today()
     try:
         datetime.strptime(day, "%Y-%m-%d")
     except ValueError:
-        raise ValueError("Choose the day of the service.")
-    every = round(truck.get("service_every_km") or 60000)
-    db.execute("UPDATE trucks SET odometer_km=?, odometer_on=?, service_due_km=? WHERE id=?",
-               (km, day, km + every, truck["id"]))
-    return {"message": f"Service of {truck['plate']} saved at {km:,} km. Next one at {km + every:,} km.".replace(",", ".")}
+        raise ValueError("Choose the day of the km reading.")
+    return day
+
+
+def km_values(saved, last, odometer, day, every=None):
+    """Maintenance of one tractor: km of the last oil change and the km now (read at the end of the month, on `day`).
+    The next change is the last one + `service_every_km`. A new reading keeps the previous one, so the km per
+    month (and the day of the next change) can be estimated from the two."""
+    plate = saved.get("plate", "")
+    if last is not None and odometer is not None and odometer < last:
+        raise ValueError(f"{plate}: the km now ({odometer:,}) are lower than the km of the last change ({last:,}).".replace(",", "."))
+    values = {"last_service_km": last, "odometer_km": odometer,
+              "service_every_km": round(every or saved.get("service_every_km") or SERVICE_EVERY)}
+    old, old_on = saved.get("odometer_km"), saved.get("odometer_on")
+    if odometer is None:
+        values.update(odometer_on=None, prev_odometer_km=None, prev_odometer_on=None)
+    elif odometer == old and old_on:
+        values.update(odometer_on=old_on, prev_odometer_km=saved.get("prev_odometer_km"), prev_odometer_on=saved.get("prev_odometer_on"))
+    elif old is not None and old_on and old_on < day and old <= odometer:
+        values.update(odometer_on=day, prev_odometer_km=old, prev_odometer_on=old_on)  # a new month: keep the last one
+    else:  # first reading, or a correction of the same day
+        values.update(odometer_on=day, prev_odometer_km=saved.get("prev_odometer_km") if old_on == day else None,
+                      prev_odometer_on=saved.get("prev_odometer_on") if old_on == day else None)
+    values["service_due_km"] = last + values["service_every_km"] if last is not None else None
+    return values
+
+
+def service_values(db, data):
+    """Maintenance fields of the tractor form. An older open form may not send them: keep what is saved."""
+    saved = item(db, "trucks", data["id"]) if data.get("id") else {}
+    if "last_service_km" not in data and "odometer_km" not in data:
+        return {}
+    every = _km(data, "service_every_km", "Change every") or SERVICE_EVERY
+    if every < 1000:
+        raise ValueError("Change every: at least 1.000 km.")
+    return km_values(saved, _km(data, "last_service_km", "Last change at"), _km(data, "odometer_km", "Km now"),
+                     _day(data, "odometer_on"), every)
+
+
+def _update_km(db, truck_id, values):
+    db.execute("UPDATE trucks SET " + ",".join(f"{key}=?" for key in values) + " WHERE id=?", (*values.values(), truck_id))
+
+
+def save_km_list(db, data):
+    """The month-end list: for each tractor the km of the last change and the km now, all read on the same day."""
+    day = _day(data)
+    rows = data.get("items")
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("Nothing to save.")
+    changed = 0
+    for row in rows:
+        truck = item(db, "trucks", row.get("id"))
+        last, odometer = _km(row, "last_service_km", f"{truck['plate']} last change"), _km(row, "odometer_km", f"{truck['plate']} km now")
+        if last == truck.get("last_service_km") and odometer == truck.get("odometer_km"):
+            continue
+        _update_km(db, truck["id"], km_values(truck, last, odometer, day))
+        changed += 1
+    return {"message": f"Km saved for {changed} tractor{'s' if changed != 1 else ''}." if changed else "Nothing changed."}
+
+
+def service_done(db, data):
+    """The oil change was done at `km`: it becomes the last change (and the km now, if higher)."""
+    truck = item(db, "trucks", data.get("id"))
+    km = _km(data, "km", "Km at the change")
+    if km is None:
+        raise ValueError("Write the km at the change.")
+    day = _day(data)
+    odometer = truck.get("odometer_km")
+    values = km_values(truck, km, km if odometer is None or km >= odometer else odometer, day if odometer is None or km >= odometer else truck.get("odometer_on") or day)
+    _update_km(db, truck["id"], values)
+    return {"message": f"Change of {truck['plate']} saved at {km:,} km. Next one at {values['service_due_km']:,} km.".replace(",", ".")}
 
 
 def save_master(db, kind, data):

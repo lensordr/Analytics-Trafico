@@ -30,7 +30,7 @@ from names import apply_name_fixes, name_fixes
 from market import import_witruck, key_clients
 from driverlinks import driver_deca, driver_link, driver_order, eta_reports, link_opens, mark_opened, report_delay
 from itv import delete_itv, import_itv, save_itv
-from masters import archive_master, restore_master, save_master, service_done
+from masters import archive_master, restore_master, save_km_list, save_master, service_done
 from materials import delete_material, save_material
 from tariffs import delete_tariff, save_tariff
 from nearby import log_contact, nearby_companies
@@ -42,6 +42,9 @@ from upcoming import weekly_availability
 
 ROOT = Path(__file__).resolve().parent
 TOKEN = secrets.token_urlsafe(32)
+# What the workshop account (SERVICE_USERS) sees of each tractor: the plate and its maintenance, nothing else.
+SERVICE_TRUCK_FIELDS = ("id", "plate", "operation", "active", "archived_at", "driver_id", "last_service_km", "service_every_km",
+                        "service_due_km", "odometer_km", "odometer_on", "prev_odometer_km", "prev_odometer_on")
 COMPRESSIBLE = {"application/json", "text/html", "text/javascript", "text/css"}
 
 CONNECTOR_GET = {"/.well-known/oauth-protected-resource","/.well-known/oauth-protected-resource/mcp",
@@ -227,6 +230,37 @@ class Handler(BaseHTTPRequestHandler):
     def signed_in(self):
         return self.auth.valid(self.headers.get("Cookie"))
 
+    def service_user(self):
+        """The workshop account: sees only ITV and the tractors' maintenance, and cannot change anything."""
+        return self.auth.role(self.auth.user(self.headers.get("Cookie"))) == "service"
+
+    def dispatcher_state(self):
+        with connect(self.server.database) as db:
+            state = {key:rows(db,key) for key in ("drivers","trucks","trailers","locations","orders")}
+            state["itv"] = rows(db,"itv_vehicles")
+            state["materials"] = rows(db,"materials")
+            state["tariffs"] = rows(db,"tariffs")
+            state["settings"] = deca.settings(db)
+            state["link_opens"] = link_opens(db)
+            state["eta_reports"] = eta_reports(db)
+            state["load_requests"] = load_requests(db)
+        folder = getattr(self.server,"backup_folder",None)
+        newest = autobackup.latest(folder) if folder else None
+        state["auto_backup"] = {"enabled": bool(folder), "latest": stamp(datetime.fromtimestamp(newest.stat().st_mtime,UTC)) if newest else None,
+                                "count": len(autobackup.files(folder)) if folder else 0}
+        state["role"] = "dispatcher"
+        return state
+
+    def service_state(self):
+        with connect(self.server.database) as db:
+            drivers = {row["id"]: row["name"] for row in db.execute("SELECT id, name FROM drivers")}
+            trucks = [{key: t[key] for key in SERVICE_TRUCK_FIELDS} | {"driver_name": drivers.get(t["driver_id"], "")}
+                      for t in rows(db, "trucks") if not t["archived_at"]]
+            itv = rows(db, "itv_vehicles")
+        return {"role": "service", "trucks": trucks, "itv": itv, "drivers": [], "trailers": [], "locations": [], "orders": [],
+                "materials": [], "tariffs": [], "settings": {}, "link_opens": {}, "eta_reports": [], "load_requests": [],
+                "auto_backup": {"enabled": False, "latest": None, "count": 0}}
+
     # ---- client order page: the secret link identifies the client; only its own routes, no prices
     def client_get(self, token, message="", error="", form=None, lang=None):
         query = dict(parse_qsl(urlsplit(self.path).query))
@@ -357,6 +391,8 @@ class Handler(BaseHTTPRequestHandler):
                 if user is None:
                     time.sleep(1)
                     return self.connector_page(params, "Wrong user or password." if self.auth.named else "Wrong password.", 401)
+                if self.auth.role(user) == "service":  # the workshop account sees only ITV and maintenance
+                    return self.connector_page(params, "This account cannot connect Claude.", 403)
             code = oauth.new_code(self.auth, user, params.get("client_id",""), params["redirect_uri"], params["code_challenge"])
             query = urlencode({"code": code, **({"state": params["state"]} if params.get("state") else {})})
             return self.redirect(params["redirect_uri"] + ("&" if "?" in params["redirect_uri"] else "?") + query)
@@ -423,6 +459,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.wfile.write(body)
         if path not in ("/style.css","/driver.css","/client.css","/client.js") and not self.signed_in():
             return self.send_body(401,{"error":"Please sign in again."}) if path.startswith("/api/") else self.redirect("/login")
+        if self.service_user() and path.startswith(("/api/", "/tiles/")) and path != "/api/state":
+            return self.send_body(403, {"error": "This account can only see ITV and maintenance."})
         tile = re.fullmatch(r"/tiles/(\d{1,2})/(\d{1,7})/(\d{1,7})\.png", path)
         if tile:
             try:
@@ -431,19 +469,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_body(404, {"error": "No map tile"})
             return self.send_body(200, body, "image/png", {"Cache-Control": "private, max-age=604800"})
         if path == "/api/state":
-            with connect(self.server.database) as db:
-                state = {key:rows(db,key) for key in ("drivers","trucks","trailers","locations","orders")}
-                state["itv"] = rows(db,"itv_vehicles")
-                state["materials"] = rows(db,"materials")
-                state["tariffs"] = rows(db,"tariffs")
-                state["settings"] = deca.settings(db)
-                state["link_opens"] = link_opens(db)
-                state["eta_reports"] = eta_reports(db)
-                state["load_requests"] = load_requests(db)
-            folder = getattr(self.server,"backup_folder",None)
-            newest = autobackup.latest(folder) if folder else None
-            state["auto_backup"] = {"enabled": bool(folder), "latest": stamp(datetime.fromtimestamp(newest.stat().st_mtime,UTC)) if newest else None,
-                                    "count": len(autobackup.files(folder)) if folder else 0}
+            state = self.service_state() if self.service_user() else self.dispatcher_state()
             state.update(token=TOKEN,auth=self.auth.enabled,user=self.auth.user(self.headers.get("Cookie")) or "",here_configured=routing.configured(),timezone="Europe/Madrid",
                          storage="turso" if isinstance(self.server.database,TursoReplica) else "sqlite")
             # Unchanged data (the page asks every minute): answer "304 Not Modified" without sending it again.
@@ -508,6 +534,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_body(401,{"error":"Please sign in again."})
         if not self.valid_host() or not secrets.compare_digest(self.headers.get("X-CSRF-Token",""),TOKEN):
             return self.send_body(403,{"error":"Please reload the app and try again."})
+        if self.service_user():
+            return self.send_body(403,{"error":"This account can only see ITV and maintenance."})
         try:
             length = int(self.headers.get("Content-Length","0"))
             limit = 3_000_000 if urlsplit(self.path).path in ("/api/itv-import", "/api/witruck-import") else 100000
@@ -578,6 +606,8 @@ class Handler(BaseHTTPRequestHandler):
                     result = weekly_availability(db,data)
                 elif path == "/api/truck-service":
                     result = service_done(db,data)
+                elif path == "/api/truck-km":
+                    result = save_km_list(db,data)
                 elif path == "/api/itv":
                     result = {"id":save_itv(db,data)}
                 elif path == "/api/itv-delete":

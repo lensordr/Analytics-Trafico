@@ -1032,28 +1032,86 @@ class DispatchTests(unittest.TestCase):
             server.server_close()
             thread.join()
 
-    def test_tractor_maintenance_km_are_saved_and_service_done_sets_the_next(self):
-        from masters import _today, service_done
+    def test_tractor_maintenance_last_change_and_month_end_km(self):
+        from masters import _today, save_km_list, service_done
         base = {"id":self.truck,"plate":"TEST-001","trailer_id":"","operation":"International","location_id":self.a}
         with connect(self.database) as db:
             truck = app.item(db,"trucks",self.truck)
-            self.assertEqual((truck["service_every_km"], truck["service_due_km"], truck["odometer_on"]), (60000, None, None))
-            app.save_master(db,"trucks",{**base,"service_due_km":"540000","odometer_km":"512300","monthly_km":"11000","service_every_km":""})
+            self.assertEqual((truck["service_every_km"], truck["last_service_km"], truck["odometer_on"]), (60000, None, None))
+            app.save_master(db,"trucks",{**base,"last_service_km":"480000","odometer_km":"512300","service_every_km":""})
             truck = app.item(db,"trucks",self.truck)
-            self.assertEqual((truck["service_due_km"], truck["odometer_km"], truck["monthly_km"], truck["service_every_km"], truck["odometer_on"]),
-                             (540000, 512300, 11000, 60000, _today()))
-            db.execute("UPDATE trucks SET odometer_on='2026-01-01' WHERE id=?", (self.truck,))
-            app.save_master(db,"trucks",{**base,"service_due_km":"540000","odometer_km":"512300","monthly_km":"12000"})
-            self.assertEqual(app.item(db,"trucks",self.truck)["odometer_on"], "2026-01-01")  # same reading: keeps its day
+            self.assertEqual((truck["last_service_km"], truck["service_due_km"], truck["odometer_km"], truck["odometer_on"]),
+                             (480000, 540000, 512300, _today()))
             app.save_master(db,"trucks",{**base})  # an older form without the fields keeps them
-            self.assertEqual(app.item(db,"trucks",self.truck)["service_due_km"], 540000)
-            with self.assertRaises(ValueError):
-                app.save_master(db,"trucks",{**base,"odometer_km":"-5"})
-            self.assertIn("Next one at 601.000 km", service_done(db,{"id":self.truck,"km":"541000","day":"2026-11-20"})["message"])
+            self.assertEqual(app.item(db,"trucks",self.truck)["last_service_km"], 480000)
+            with self.assertRaisesRegex(ValueError, "lower than the km of the last change"):
+                app.save_master(db,"trucks",{**base,"last_service_km":"480000","odometer_km":"470000"})
+            # Month-end list: a new reading keeps the one before (for the km per month).
+            db.execute("UPDATE trucks SET odometer_on='2026-10-31' WHERE id=?", (self.truck,))
+            self.assertIn("1 tractor", save_km_list(db,{"day":"2026-11-30","items":[{"id":self.truck,"last_service_km":"480000","odometer_km":"523300"}]})["message"])
             truck = app.item(db,"trucks",self.truck)
-            self.assertEqual((truck["odometer_km"], truck["odometer_on"], truck["service_due_km"]), (541000, "2026-11-20", 601000))
+            self.assertEqual((truck["odometer_km"], truck["odometer_on"], truck["prev_odometer_km"], truck["prev_odometer_on"]),
+                             (523300, "2026-11-30", 512300, "2026-10-31"))
+            self.assertEqual(save_km_list(db,{"day":"2026-11-30","items":[{"id":self.truck,"last_service_km":"480000","odometer_km":"523300"}]})["message"], "Nothing changed.")
+            # A correction on the same day keeps the reading before.
+            save_km_list(db,{"day":"2026-11-30","items":[{"id":self.truck,"last_service_km":"480000","odometer_km":"523000"}]})
+            self.assertEqual(app.item(db,"trucks",self.truck)["prev_odometer_km"], 512300)
             with self.assertRaises(ValueError):
-                service_done(db,{"id":self.truck,"km":"541000","day":"20.11.2026"})
+                save_km_list(db,{"day":"30.11.2026","items":[{"id":self.truck,"odometer_km":"1"}]})
+            with self.assertRaises(ValueError):
+                save_km_list(db,{"day":"2026-11-30","items":[{"id":self.truck,"odometer_km":"abc"}]})
+            # The oil change is done: it becomes the last change, the next one is 60,000 km later.
+            self.assertIn("Next one at 601.000 km", service_done(db,{"id":self.truck,"km":"541000","day":"2026-12-05"})["message"])
+            truck = app.item(db,"trucks",self.truck)
+            self.assertEqual((truck["last_service_km"], truck["service_due_km"], truck["odometer_km"], truck["odometer_on"]),
+                             (541000, 601000, 541000, "2026-12-05"))
+
+    def test_service_account_sees_only_itv_and_maintenance_read_only(self):
+        from auth import Auth
+        import http.client
+        with connect(self.database) as db:
+            db.execute("UPDATE trucks SET last_service_km=480000, odometer_km=512300 WHERE id=?", (self.truck,))
+        users = {"malcom1": "first-secret-1", "service": "workshop-secret-1"}
+        server = app.ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)
+        server.database = self.database
+        server.auth = Auth(None, "fixed-secret", users, ["Service", ""])
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        port = server.server_port
+        def call(method, path, body=None, headers=None):
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+            connection.request(method, path, body=body, headers={"Host": f"127.0.0.1:{port}", **(headers or {})})
+            response = connection.getresponse()
+            data = response.read()
+            connection.close()
+            return response.status, dict(response.getheaders()), data
+        form = {"Content-Type": "application/x-www-form-urlencoded"}
+        try:
+            sessions = {}
+            for name, password in users.items():
+                _, headers, _ = call("POST", "/login", f"user={name}&password={password}".encode(), form)
+                sessions[name] = {"Cookie": headers["Set-Cookie"].split(";")[0]}
+            status, _, body = call("GET", "/api/state", headers=sessions["service"])
+            state = json.loads(body)
+            self.assertEqual((status, state["role"], state["orders"], state["locations"], state["tariffs"], state["drivers"]), (200, "service", [], [], [], []))
+            truck = next(t for t in state["trucks"] if t["id"] == self.truck)
+            self.assertEqual((truck["plate"], truck["last_service_km"], truck["driver_name"]), ("TEST-001", 480000, "Test Driver"))
+            self.assertNotIn("location_id", truck)
+            self.assertIn("itv", state)
+            self.assertEqual(json.loads(call("GET", "/api/state", headers=sessions["malcom1"])[2])["role"], "dispatcher")
+            # Read only: no save, no backup, no PDF.
+            for path in ("/api/backup", "/api/deca.pdf?order=1"):
+                self.assertEqual(call("GET", path, headers=sessions["service"])[0], 403)
+            write = {**sessions["service"], "Content-Type": "application/json", "X-CSRF-Token": app.TOKEN}
+            for path in ("/api/truck-km", "/api/itv", "/api/trucks"):
+                self.assertEqual(call("POST", path, json.dumps({"id": self.truck}).encode(), write)[0], 403)
+            status = call("POST", "/api/truck-km", json.dumps({"day": "2026-11-30", "items": [{"id": self.truck, "last_service_km": 480000, "odometer_km": 520000}]}).encode(),
+                          {**sessions["malcom1"], "Content-Type": "application/json", "X-CSRF-Token": app.TOKEN})[0]
+            self.assertEqual(status, 200)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
 
     def test_witruck_import_ranks_key_clients_and_lanes_near_a_truck(self):
         from datetime import datetime

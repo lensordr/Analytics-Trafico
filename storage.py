@@ -494,13 +494,16 @@ def initialize(target):
             status TEXT NOT NULL DEFAULT 'New', reason TEXT NOT NULL DEFAULT '', order_ids TEXT NOT NULL DEFAULT '[]',
             handled_at TEXT, handled_by TEXT NOT NULL DEFAULT '')""")
         db.execute("CREATE INDEX IF NOT EXISTS load_requests_client ON load_requests(client_id, created_at)")
-        # Maintenance (oil and filters every ~60,000 km): the km of the next service, the last odometer reading
-        # and its date, and the km the tractor does in a month, to estimate how many km are left today.
+        # Maintenance (oil change every 60,000 km): km of the last change, the km read at the end of the month
+        # (and the reading before it, for the km per month). The next change is the last one + service_every_km.
         columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(trucks)")}
         for column, kind in (("service_due_km", "REAL"), ("odometer_km", "REAL"), ("odometer_on", "TEXT"),
-                             ("monthly_km", "REAL"), ("service_every_km", "REAL NOT NULL DEFAULT 60000")):
+                             ("monthly_km", "REAL"), ("service_every_km", "REAL NOT NULL DEFAULT 60000"),
+                             ("last_service_km", "REAL"), ("prev_odometer_km", "REAL"), ("prev_odometer_on", "TEXT")):
             if column not in columns:
                 db.execute(f"ALTER TABLE trucks ADD COLUMN {column} {kind}")
+                if column == "last_service_km":  # the first version saved the next change: the last one is 60,000 km before
+                    db.execute("UPDATE trucks SET last_service_km=service_due_km-service_every_km WHERE service_due_km IS NOT NULL")
         # Witruck history (imported CSV exports): every trip of the last months, own trucks and partners.
         db.execute("""CREATE TABLE IF NOT EXISTS market_trips (
             route_no INTEGER PRIMARY KEY, day TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '',

@@ -3,6 +3,8 @@
 Users: APP_USERS = "name1:password1;name2:password2" (each dispatcher signs in with their own name and
 password, from any computer, at the same time). APP_PASSWORD alone still works: one shared password.
 Without either (the app on your own computer) nothing changes: no login.
+SERVICE_USERS = "service,taller": names of APP_USERS that only see ITV and the tractors' maintenance, read only
+(the workshop). Every other user is a dispatcher.
 """
 import hashlib
 import hmac
@@ -35,9 +37,10 @@ def parse_users(text):
 
 
 class Auth:
-    def __init__(self, password=None, secret=None, users=None):
+    def __init__(self, password=None, secret=None, users=None, service_users=()):
         self.password = password or None
         self.users = dict(users or {})
+        self.service_users = {name.strip().lower() for name in service_users if name.strip()}
         # A fixed SESSION_SECRET keeps you logged in across server restarts.
         self.secret = (secret or secrets.token_hex(32)).encode()
         self._failures = {}
@@ -85,6 +88,10 @@ class Auth:
                 continue
             return user
         return None
+
+    def role(self, user):
+        """'service' for the workshop accounts (ITV and maintenance, read only), else 'dispatcher'."""
+        return "service" if user and user in self.service_users else "dispatcher"
 
     def valid(self, cookie_header):
         return self.user(cookie_header) is not None

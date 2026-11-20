@@ -66,7 +66,11 @@ def main():
         sys.exit(1)
     with server:
         server.database = database
-        server.auth = Auth(password, os.environ.get("SESSION_SECRET","").strip() or None, users)
+        service_users = os.environ.get("SERVICE_USERS","").replace(";",",").split(",")
+        server.auth = Auth(password, os.environ.get("SESSION_SECRET","").strip() or None, users, service_users)
+        unknown = {name.strip().lower() for name in service_users if name.strip()} - set(users)
+        if unknown:
+            print(f"SERVICE_USERS: {', '.join(sorted(unknown))} not in APP_USERS (they cannot sign in).",flush=True)
         server.public_hosts = {host.strip() for host in (os.environ.get("PUBLIC_HOST",""), os.environ.get("RENDER_EXTERNAL_HOSTNAME","")) if host.strip()}
         # Online: remember the public address, so driver links work from any copy of the app.
         public = os.environ.get("PUBLIC_HOST","").strip() or os.environ.get("RENDER_EXTERNAL_HOSTNAME","").strip()
