@@ -42,6 +42,10 @@ document.addEventListener('click',async event=>{const nav=event.target.closest('
   if(action==='today'){selectedDay=dayOf(state.now);render();return;}
   if(action==='clear-filters'){for(const key of Object.keys(filters))filters[key]='';render();return;}
   if(action==='order-detail'){orderDetail(id);return;}
+  if(action==='plan-select'){plannerSel=Number(id);for(const el of document.querySelectorAll('.pt-trip'))el.classList.toggle('sel',el.dataset.id===id);const side=$('.pt-side');if(side)side.innerHTML=plannerSide();return;}
+  if(action==='plan-chip'){plannerChip=id;render();return;}
+  if(action==='plan-alerts'){const box=$('#pt-alerts');if(box)box.hidden=!box.hidden;return;}
+  if(action==='plan-truck'){const t=state.trucks.find(x=>x.id===Number(id));openOrder({truck_id:t.id,driver_id:t.driver_id,trailer_id:t.trailer_id,loading_id:t.location_id||'',pickup_at:selectedDay+'T08:00'});return;}
   if(action==='open-deca'){openDeca(id);return;}
   if(action==='map-marker'){mapMarkerClick(button.dataset.marker);return;}
   if(action==='map-focus'){focusTruck(id);return;}
