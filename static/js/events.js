@@ -143,7 +143,7 @@ document.addEventListener('change',event=>{const input=event.target;
   if(input.id==='tariff-inactive'){tariffFilters.inactive=input.checked;refreshTariffList();return;}
   if(input.name==='route_client'&&input.closest('#order-form')){const form=input.closest('#order-form');form._clientRoutesQuery='';renderClientRoutes(form);return;}
   if(input.name==='loading_id'&&input.closest('#order-form'))refreshUnloadingPicker(input.closest('#order-form'));
-  if(['loading_id','unloading_id','client_id'].includes(input.name)&&input.closest('#order-form'))syncTariffBox(input.closest('#order-form'));
+  if(['loading_id','unloading_id','client_id'].includes(input.name)&&input.closest('#order-form')){syncTariffBox(input.closest('#order-form'));loadUsualTrucks(input.closest('#order-form'));}
   if(['route_mode','loading_id','unloading_id'].includes(input.name)&&input.closest('#order-form')){const form=input.closest('#order-form');ensureOrderCoordinates(form,true).catch(error=>showError(form,error));}
   if(input.closest('#order-form')&&input.name!=='clock_confirmed'){const form=input.closest('#order-form');$('#order-preview').innerHTML='';if((input.name||'').startsWith('clock_')||input.name==='truck_id'){form._restCreditFrom=null;form._plannedClock=false;}if(['pickup_at','driver_id'].includes(input.name)&&form._plannedClock){carryOrderClock(form).catch(error=>showError(form,error));}else renderLoadingRestSuggestion(form);}
 });

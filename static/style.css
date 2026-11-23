@@ -334,3 +334,9 @@ tr.soon .service-bar{color:#f59e0b}tr.overdue .service-bar{color:#d92d20}
 .client-route-way small{color:#6b7766;font-size:11px}.client-route-way b{color:#6e8c60;margin:0 3px}.client-route-price{font-size:11px;color:#4d5a48}
 /* Order status everywhere: dark green completed, blue in transit, grey planned (late = the red alert badge) */
 .badge.st-done{background:#1e6b34;color:#fff}.badge.st-transit{background:#1d6fd1;color:#fff}.badge.st-planned{background:#e3e6e1;color:#3d453a}
+/* Order form: tractors that usually do the route */
+.usual-trucks{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:2px 0 6px;padding:8px 10px;border:1px solid #e3e8df;border-radius:8px;background:#f8faf6}
+.usual-title{font-size:12px;color:#4d5a48;width:100%}
+.usual-truck{border:1px solid #c9d3c3;background:#fff;border-radius:999px;padding:5px 10px;font-size:12px;cursor:pointer}
+.usual-truck b{color:#1e6b34;margin-left:3px}.usual-truck small{color:#6b7766;margin-left:3px}
+.usual-truck.own{border-color:#1e6b34}.usual-truck:hover{background:#eaf3de}.usual-truck.missing{cursor:default;opacity:.65}

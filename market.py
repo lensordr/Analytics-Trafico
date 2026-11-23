@@ -315,3 +315,73 @@ def lanes_near(db, origin, radius_km=None, now=None, limit=10, days=WEEKS * 7):
                       "revenue": round(lane["revenue"], 2), "score": lane["trips"] / (1 + empty / 40)})
     found.sort(key=lambda l: -l["score"])
     return found[:limit]
+
+
+# ---------------------------------------------------------------- who usually does a route (dispatcher only)
+def _same_place(places, trip, end, loc):
+    """A trip end is this saved location: matched to it, or the same postal code and the same distinctive name."""
+    if not loc:
+        return False
+    match, _ = places.place(trip.get(f"{end}_company"), trip.get(f"{end}_pc"), trip.get(f"{end}_city"), trip.get(f"{end}_country"))
+    if match:
+        return match["id"] == loc["id"]
+    pc = postal(trip.get(f"{end}_pc")).lstrip("0")
+    return bool(pc) and pc == postal(loc.get("postal_code")).lstrip("0") and first_word(trip.get(f"{end}_company")) == first_word(loc.get("company"))
+
+
+def usual_trucks(db, data, now=None, days=120, limit=5):
+    """The tractors (and drivers) that did this route in the Witruck history, with their share: the exact route of the
+    client first; with too few trips, the same loading place of the client, then any client, then the client's trips."""
+    client = db.execute("SELECT id, company, nif FROM locations WHERE id=?", (data.get("client_id") or 0,)).fetchone()
+    start = db.execute("SELECT id, company, postal_code FROM locations WHERE id=?", (data.get("from_id") or 0,)).fetchone()
+    end = db.execute("SELECT id, company, postal_code FROM locations WHERE id=?", (data.get("to_id") or 0,)).fetchone()
+    client, start, end = (dict(x) if x else None for x in (client, start, end))
+    if not (start or end or client):
+        return {"basis": "", "trips": 0, "trucks": []}
+    today = (now or datetime.now(UTC)).astimezone(ZONE).date()
+    trips = _trips(db, (today - timedelta(days=days)).isoformat())
+    places = Places(db)
+    of_client = (lambda t: (places.client(t.get("client"), t.get("client_nif")) or {}).get("id") == client["id"]) if client else (lambda t: True)
+    at_start = [t for t in trips if _same_place(places, t, "from", start)] if start else []
+    levels = []
+    if start and end:
+        levels.append(("route", [t for t in at_start if _same_place(places, t, "to", end) and of_client(t)]))
+    if start:
+        levels.append(("loading", [t for t in at_start if of_client(t)]))
+    if end:
+        levels.append(("unloading", [t for t in trips if _same_place(places, t, "to", end) and of_client(t)]))
+    if start:
+        levels.append(("loading_any", at_start))
+    if client:
+        levels.append(("client", [t for t in trips if of_client(t)]))
+    basis, chosen = next(((b, ts) for b, ts in levels if len(ts) >= 3), next(((b, ts) for b, ts in levels if ts), ("", [])))
+    if not chosen:
+        return {"basis": "", "trips": 0, "trucks": []}
+    trucks = [dict(r) for r in db.execute("SELECT id, plate, driver_id, own_fleet FROM trucks WHERE archived_at IS NULL AND active=1")]
+    drivers = [dict(r) for r in db.execute("SELECT id, name, active FROM drivers")]
+    key = lambda p: re.sub(r"[^A-Z0-9]", "", re.sub(r"\(.*?\)", "", str(p or "").upper()))
+    norm = lambda s: re.sub(r"[^a-z]", "", _plain(s))
+    def truck_of(plate):
+        p = key(re.sub(r"^\d\.", "", plate or ""))
+        hits = [t for t in trucks if key(t["plate"]) and p.startswith(key(t["plate"]))]
+        return max(hits, key=lambda t: len(key(t["plate"])), default=None)
+    found = {}
+    for trip in chosen:
+        truck = truck_of(trip.get("plate"))
+        k = truck["id"] if truck else key(trip.get("plate"))
+        row = found.setdefault(k, {"truck_id": truck["id"] if truck else None, "plate": truck["plate"] if truck else (trip.get("plate") or "?"),
+                                   "own": bool(truck["own_fleet"]) if truck else bool(trip.get("own")), "trips": 0, "last": "", "drivers": {}})
+        row["trips"] += 1
+        row["last"] = max(row["last"], trip.get("day") or "")
+        if trip.get("driver"):
+            row["drivers"][trip["driver"]] = row["drivers"].get(trip["driver"], 0) + 1
+    total = len(chosen)
+    result = []
+    for row in found.values():
+        names = row.pop("drivers")
+        name = max(names.items(), key=lambda kv: kv[1])[0] if names else ""
+        driver = next((d for d in drivers if d["active"] and norm(name) and norm(d["name"]).startswith(norm(name)[:6])), None)
+        default = next((t["driver_id"] for t in trucks if t["id"] == row["truck_id"]), None)
+        result.append({**row, "share": round(row["trips"] * 100 / total), "driver": name, "driver_id": (driver or {}).get("id") or default})
+    result.sort(key=lambda r: (-r["trips"], not r["own"], r["plate"]))
+    return {"basis": basis, "trips": total, "trucks": result[:limit]}

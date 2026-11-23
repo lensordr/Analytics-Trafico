@@ -1169,6 +1169,12 @@ class DispatchTests(unittest.TestCase):
                              (client, self.a, self.b, 3, 1, ["GROUPTRANS S. COOP."]))
             self.assertEqual(lanes_near(db, app.item(db, "locations", self.b), 50), [])  # nothing loads near Paris
             self.assertEqual(next_loads(db, {"location_id": self.a})["market"][0]["trips"], 3)
+            # Who usually does the route: the three trips, all with the same tractor (not in Tractors here).
+            from market import usual_trucks
+            usual = usual_trucks(db, {"client_id": client, "from_id": self.a, "to_id": self.b})
+            self.assertEqual((usual["basis"], usual["trips"], usual["trucks"][0]["plate"], usual["trucks"][0]["share"], usual["trucks"][0]["driver"]),
+                             ("route", 3, "7377NNV", 100, "Javier"))
+            self.assertEqual(usual_trucks(db, {"from_id": self.b})["trips"], 0)  # nothing loads in Paris
 
     def test_client_link_shows_only_own_routes_without_prices(self):
         from clientlinks import client_link, client_routes, load_requests, set_request_status

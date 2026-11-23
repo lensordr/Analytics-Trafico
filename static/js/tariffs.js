@@ -73,6 +73,14 @@ function useClientRoute(form,t){const e=form.elements;
   applyTariff(form,t);if(!e.distance_km.value&&t.km)e.distance_km.value=t.km;renderClientRoutes(form);
   toast(`${companyName(t.client_id)}: ${getLocation(t.from_id)?.city||''} → ${getLocation(t.to_id)?.city||''} filled in.`);}
 
+// ---------------------------------------------------------------- Order form: who usually does this route (Witruck history)
+// Only in the dispatcher's form: the tractors that did the route before, with their share; a click assigns tractor and driver.
+const USUAL_BASIS={route:'this route',loading:'this client from this loading place',unloading:'this client to this unloading place',loading_any:'this loading place (any client)',client:'this client'};
+async function loadUsualTrucks(form){const box=$('#usual-trucks',form);if(!box)return;const e=form.elements,ask={client_id:Number(e.client_id?.value)||null,from_id:Number(e.loading_id?.value)||null,to_id:Number(e.unloading_id?.value)||null};
+  const key=JSON.stringify(ask);if(form._usualKey===key)return;form._usualKey=key;if(!ask.from_id&&!ask.to_id&&!ask.client_id){box.innerHTML='';return;}
+  let d;try{d=await api('/api/usual-trucks',ask);}catch{box.innerHTML='';return;}if(form._usualKey!==key)return;
+  box.innerHTML=!d.trucks.length?'':`<div class="usual-trucks"><span class="usual-title">🚛 Usually on ${esc(USUAL_BASIS[d.basis]||'this route')} · ${d.trips} ${d.trips===1?'trip':'trips'} in Witruck:</span>${d.trucks.map(t=>t.truck_id?`<button type="button" class="usual-truck ${t.own?'own':''}" data-action="use-tractor" data-id="${t.truck_id}" data-driver="${t.driver_id||''}" title="Last time ${esc(formatDay(t.last))}"><strong>${esc(t.plate)}</strong> ${esc(t.driver||'')} <b>${t.share}%</b> <small>${t.trips}×${t.own?'':' · partner'}</small></button>`:`<span class="usual-truck missing" title="Not in Tractors"><strong>${esc(t.plate)}</strong> ${esc(t.driver||'')} <b>${t.share}%</b></span>`).join('')}</div>`;}
+
 // ---------------------------------------------------------------- Order form: client & price
 const routeTariffs=(from,to,client)=>(state.tariffs||[]).filter(t=>t.active&&t.from_id===Number(from)&&t.to_id===Number(to)&&(!client||t.client_id===Number(client))).sort((a,b)=>String(b.price_date).localeCompare(String(a.price_date)));
 function priceSection(draft){return `<div class="span-2 section-title">Client & price</div><div class="span-2" id="tariff-box"></div><input type="hidden" name="tariff_id" value="${esc(draft.tariff_id||'')}">

@@ -27,7 +27,7 @@ from auth import Auth
 from clientlinks import client_by_token, client_link, client_requests, client_routes, link_order, load_requests, revoke_client_link, set_request_status, submit_request
 from common import item, text
 from names import apply_name_fixes, name_fixes
-from market import import_witruck, key_clients
+from market import import_witruck, key_clients, usual_trucks
 from driverlinks import driver_deca, driver_link, driver_order, eta_reports, link_opens, mark_opened, report_delay
 from itv import delete_itv, import_itv, save_itv
 from masters import archive_master, restore_master, save_km_list, save_master, service_done
@@ -612,6 +612,8 @@ class Handler(BaseHTTPRequestHandler):
                     result = weekly_availability(db,data)
                 elif path == "/api/truck-service":
                     result = service_done(db,data)
+                elif path == "/api/usual-trucks":
+                    result = usual_trucks(db,data)
                 elif path == "/api/truck-km":
                     result = save_km_list(db,data)
                 elif path == "/api/itv":
