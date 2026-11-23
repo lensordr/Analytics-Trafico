@@ -326,3 +326,9 @@ tr.soon .service-bar{color:#f59e0b}tr.overdue .service-bar{color:#d92d20}
 .pt-empty{padding:10px 0}
 @media(max-width:1250px){.pt-layout{grid-template-columns:1fr}.pt-side{position:static}}
 @media(max-width:800px){.pt-search{min-width:0;width:100%}.pt-title{font-size:18px;margin:0}}
+/* Order form: the client's saved routes */
+.client-routes-search{width:100%;margin:6px 0 8px}
+.client-route-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:6px;max-height:300px;overflow:auto;margin:4px 0 6px}
+.client-route{display:flex;flex-direction:column;gap:3px;text-align:left;border:1px solid #dfe5dc;background:#fff;border-radius:8px;padding:8px 10px;cursor:pointer}
+.client-route:hover{border-color:#6e8c60;background:#f6faf2}.client-route.chosen{border-color:#1f3b2c;background:#eaf3de}
+.client-route-way small{color:#6b7766;font-size:11px}.client-route-way b{color:#6e8c60;margin:0 3px}.client-route-price{font-size:11px;color:#4d5a48}

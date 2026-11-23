@@ -53,6 +53,26 @@ function openTariff(id=null,draft={}){const t=(state.tariffs||[]).find(x=>x.id==
   ${selectField('Price calculated','basis',tariffBases.map(([v,l])=>`<option value="${v}" ${t.basis===v?'selected':''}>${esc(l)}</option>`).join(''))}${field('Price (€)','rate',t.rate??'','number','required min="0" max="100000" step="0.01"','Per tonne, per trip or per hour, as chosen.')}${field('Distance (km, optional)','km',t.km||'','number','min="0" max="15000" step="1"')}${field('Price date','price_date',t.price_date||new Date().toISOString().slice(0,10),'date','','When this price was agreed.')}
   <label class="checkbox span-2"><input type="checkbox" name="active" ${t.active?'checked':''}><span>Active · used for new orders (untick for an older price)</span></label><div class="field span-2"><label for="f-tariff-notes">Notes (optional)</label><textarea id="f-tariff-notes" name="notes" maxlength="1000">${esc(t.notes||'')}</textarea></div></div><div class="form-actions"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Save</button></div></form>`,'TARIFFS');}
 
+// ---------------------------------------------------------------- Order form: the client's saved routes first
+// Choose the client, then one of its routes (as on the client's own order page): loading, unloading and tariff are filled in.
+const clientRoutes=client=>(state.tariffs||[]).filter(t=>t.active&&t.client_id===Number(client)).sort((a,b)=>placeLabel(getLocation(a.from_id)).localeCompare(placeLabel(getLocation(b.from_id)),'es')||placeLabel(getLocation(a.to_id)).localeCompare(placeLabel(getLocation(b.to_id)),'es')||String(b.price_date).localeCompare(String(a.price_date)));
+function clientRoutesSection(draft){const counts=new Map();for(const t of state.tariffs||[])if(t.active)counts.set(t.client_id,(counts.get(t.client_id)||0)+1);
+  const clients=[...counts].map(([id,n])=>({id,label:companyName(id),hint:`${n} saved ${n===1?'route':'routes'} · ${getLocation(id)?.city||''}`})).filter(c=>getLocation(c.id)).sort((a,b)=>a.label.localeCompare(b.label,'es'));
+  return `<div class="span-2 section-title">Client · choose one of its saved routes</div><div class="span-2 client-routes-pick">${searchSelectField('Client','route_client',clients,draft.client_id&&counts.has(Number(draft.client_id))?draft.client_id:'',{empty:'Choose a client to see its routes (optional)',placeholder:'Search client…'})}</div><div class="span-2" id="client-routes"></div>`;}
+function renderClientRoutes(form){const box=$('#client-routes',form);if(!box)return;const client=form.elements.route_client?.value;if(!client){box.innerHTML='';return;}
+  const words=searchNorm(form.querySelector('#client-routes-search')?.value||'').split(' ').filter(Boolean),routes=clientRoutes(client);
+  const shown=routes.filter(t=>!words.length||words.every(w=>searchNorm(`${placeLabel(getLocation(t.from_id))} ${placeLabel(getLocation(t.to_id))}`).includes(w)));
+  const chosen=form.elements.tariff_id?.value,place=id=>{const p=getLocation(id);return `<strong>${esc(p?.city||'?')}</strong> <small>${esc(p?.company||'')}</small>`;};
+  const list=shown.map(t=>`<button type="button" class="client-route ${String(t.id)===chosen?'chosen':''}" data-action="use-client-route" data-id="${t.id}"><span class="client-route-way">${place(t.from_id)} <b>→</b> ${place(t.to_id)}</span><span class="client-route-price">${esc(rateText(t.basis,t.rate))}${t.km?' · '+km(t.km):''}</span></button>`).join('');
+  box.innerHTML=!routes.length?notice('This client has no saved routes yet. Fill in the loading and unloading below.'):
+    `${routes.length>6?`<input type="search" id="client-routes-search" class="client-routes-search" placeholder="Search a town or company in its ${routes.length} routes…" value="${esc(form._clientRoutesQuery||'')}" aria-label="Search the client's routes">`:''}<div class="client-route-list">${list||'<p class="subtitle">No route matches.</p>'}</div><small class="subtitle">Tap a route: loading, unloading, client and price are filled in. You can still change them below.</small>`;}
+function useClientRoute(form,t){const e=form.elements;
+  setSearchSelectValue(form,'client_id',t.client_id);e.client_id.dispatchEvent(new Event('change',{bubbles:true}));
+  setSearchSelectValue(form,'loading_id',t.from_id);e.loading_id.dispatchEvent(new Event('change',{bubbles:true}));
+  setSearchSelectValue(form,'unloading_id',t.to_id);e.unloading_id.dispatchEvent(new Event('change',{bubbles:true}));
+  applyTariff(form,t);if(!e.distance_km.value&&t.km)e.distance_km.value=t.km;renderClientRoutes(form);
+  toast(`${companyName(t.client_id)}: ${getLocation(t.from_id)?.city||''} → ${getLocation(t.to_id)?.city||''} filled in.`);}
+
 // ---------------------------------------------------------------- Order form: client & price
 const routeTariffs=(from,to,client)=>(state.tariffs||[]).filter(t=>t.active&&t.from_id===Number(from)&&t.to_id===Number(to)&&(!client||t.client_id===Number(client))).sort((a,b)=>String(b.price_date).localeCompare(String(a.price_date)));
 function priceSection(draft){return `<div class="span-2 section-title">Client & price</div><div class="span-2" id="tariff-box"></div><input type="hidden" name="tariff_id" value="${esc(draft.tariff_id||'')}">
