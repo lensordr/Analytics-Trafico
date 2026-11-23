@@ -113,7 +113,7 @@ def render(token, client, routes, requests, lang, today, message="", error="", f
 
     history = "".join(
         f'<li><span class="badge {r["status"].lower()}">{t["status"].get(r["status"], r["status"])}</span>'
-        f'<strong>{escape(_day(r["load_date"]))}</strong> · {r["trucks"]} {t["trucks_short"]}<br><small>{escape(r["route"])}</small>'
+        f'<strong>{escape(_day(r["load_date"]))}</strong>{f" · {r['trucks']} {t['trucks_short']}" if r["trucks"] > 1 else ""}<br><small>{escape(r["route"])}</small>'
         + (f'<br><small class="reason">{escape(r["reason"])}</small>' if r["status"] == "Rejected" and r.get("reason") else "")
         + "".join(f'<div class="vehicle">🚛 {t["truck"]} <strong>{escape(v["plate"])}</strong>'
                   + (f' + {t["trailer"]} <strong>{escape(v["trailer"])}</strong>' if v["trailer"] else "")
@@ -140,14 +140,7 @@ def render(token, client, routes, requests, lang, today, message="", error="", f
         + '<div class="row">'
         + f'<label class="field"><span>{t["load_date"]}</span><input type="date" name="load_date" required min="{today}" value="{value("load_date", today)}"></label>'
         + f'<label class="field"><span>{t["load_time"]}</span><input name="load_time" maxlength="40" placeholder="{t["load_time_ph"]}" value="{value("load_time")}"></label>'
-        + '</div><div class="row">'
-        + f'<label class="field"><span>{t["trucks"]}</span><input type="number" name="trucks" min="1" max="30" required value="{value("trucks", 1)}"></label>'
-        + f'<label class="field"><span>{t["weight"]}</span><input name="weight" maxlength="60" value="{value("weight", DEFAULT_WEIGHT)}"></label>'
-        + f'</div><p class="hint">{t["weight_help"]}</p>'
-        + f'<label class="field"><span>{t["unload_by"]}</span><input type="date" name="unload_by" min="{today}" value="{value("unload_by")}"></label>'
-        + f'<label class="field"><span>{t["material"]}</span><input name="material" maxlength="120" value="{value("material")}"></label>'
-        + f'<label class="field"><span>{t["reference"]}</span><input name="reference" maxlength="80" value="{value("reference")}"></label>'
-        + f'<label class="field"><span>{t["contact"]}</span><input name="contact" maxlength="120" value="{value("contact")}"></label>'
+        + '</div>'
         + f'<label class="field"><span>{t["notes"]}</span><textarea name="notes" rows="3" maxlength="1000">{value("notes")}</textarea></label>'
         + f'<button class="send" type="submit">{t["send"]}</button></form>'
         + f'<section class="card"><h2>{t["yours"]}</h2><ul class="history">{history}</ul></section>')

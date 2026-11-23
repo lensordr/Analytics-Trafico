@@ -1201,7 +1201,8 @@ class DispatchTests(unittest.TestCase):
                 page=response.read().decode()
             self.assertIn("Warehouse A · Madrid",page)
             self.assertIn("Warehouse B · Paris (France)",page)
-            self.assertIn('value="24 t"',page)
+            for gone in ('name="trucks"','name="weight"','name="unload_by"','name="material"','name="reference"','name="contact"'):
+                self.assertNotIn(gone,page)  # short form: route, day, time and notes only
             for hidden in ("Secret Destination","Other Client","1777","999","internal","€"):
                 self.assertNotIn(hidden,page)
             with urlopen(url+"?l=en") as response:
