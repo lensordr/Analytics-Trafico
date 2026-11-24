@@ -164,14 +164,20 @@ class DispatchTests(unittest.TestCase):
         from driverlinks import driver_order
         with connect(self.database) as db:
             client = app.save_master(db, "locations", {"company": "Ref Client", "city": "Vic", "postal_code": "08500", "country": "Spain"})
-            tariff = app.save_tariff(db, {"client_id": client, "from_id": self.a, "to_id": self.b, "basis": "trip", "rate": 300, "reference": "PO 4471"})
+            tariff = app.save_tariff(db, {"client_id": client, "from_id": self.a, "to_id": self.b, "basis": "trip", "rate": 300, "reference": "PO 4471", "unload_reference": "DESC-9"})
             with_ref = app.create_order(db, self.manual_payload(tariff_id=tariff, rate_basis="trip", rate=300, reference="PO 4471-B"))
             no_ref = app.create_order(db, self.manual_payload(reference="", pickup_at="2030-02-07T08:00", unloading_arrive_at="2030-02-08T15:00"))
             self.assertEqual(app.item(db, "orders", with_ref)["reference"], "PO 4471-B")  # changed on this order
             token = app.driver_link(db, {"order_id": with_ref})["token"]
             order, stops, places = driver_order(db, token)
             plain = driver_order(db, app.driver_link(db, {"order_id": no_ref})["token"])
-        self.assertIn("Referencia: <b>PO 4471-B</b>", driver.render(token, order, stops, places, "es"))
+        page = driver.render(token, order, stops, places, "es")
+        self.assertEqual(order["unload_reference"], "DESC-9")  # not typed on the order: the route's
+        # The loading code above the "loaded" button, the unloading code on the unloading stop.
+        self.assertLess(page.index("Referencia de carga: <b>PO 4471-B</b>"), page.index('class="action"'))
+        self.assertIn("Referencia de descarga: <b>DESC-9</b>", page)
+        done = driver.render(token, order, [{**s, "status": "Done"} if s["kind"] == "Loading" else s for s in stops], places, "es")
+        self.assertLess(done.index("Referencia de descarga"), done.index('class="action"'))
         self.assertIn("Referință", driver.render(token, order, stops, places, "ro"))
         self.assertNotIn('class="reference"', driver.render(token, *plain, "es"))
 

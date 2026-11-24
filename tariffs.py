@@ -41,6 +41,7 @@ def save_tariff(db, data):
               "rate": number(data, "rate", None, 0, 100000), "km": number(data, "km", 0, 0, 15000),
               "price_date": price_date(data), "notes": text(data, "notes", False, 1000),
               "reference": text(data, "reference", False, 80),
+              "unload_reference": text(data, "unload_reference", False, 80),
               "active": 1 if data.get("active", True) else 0}
     if values["active"]:
         same = db.execute("SELECT id FROM tariffs WHERE client_id=? AND from_id=? AND to_id=? AND basis=? AND active=1 AND id!=?",
@@ -80,10 +81,11 @@ def order_price(db, data, stops):
         client = client or item(db, "locations", tariff["client_id"])
         if (tariff["from_id"], tariff["to_id"]) != (stops[0]["location"]["id"], stops[-1]["location"]["id"]):
             tariff = None  # the route changed after the tariff was chosen: keep the rate, drop the link
-    # The reference code: as typed on the order; an order saved from a tariff without the field takes the tariff's.
-    reference = text(data, "reference", False, 80) if "reference" in data else (tariff or {}).get("reference", "")
+    # The reference codes (loading, unloading): as typed on the order; without the field, the tariff's.
+    ref = lambda key: (text(data, key, False, 80) if key in data else (tariff or {}).get(key, "")) or ""
     return {"client_id": client["id"] if client else None, "tariff_id": tariff["id"] if tariff else None,
-            "rate_basis": basis if rate is not None else "", "rate": rate, "price_eur": total, "reference": reference or ""}
+            "rate_basis": basis if rate is not None else "", "rate": rate, "price_eur": total,
+            "reference": ref("reference"), "unload_reference": ref("unload_reference")}
 
 
 def order_amount(order, stops):

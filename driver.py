@@ -10,7 +10,7 @@ from planner import ZONE, parse_time
 
 TEXT = {
     "ro": {
-        "title": "Cursa ta", "truck": "Camion", "trailer": "Remorcă", "ref": "Referință",
+        "title": "Cursa ta", "truck": "Camion", "trailer": "Remorcă", "ref": "Referință încărcare", "unload_ref": "Referință descărcare",
         "Loading": "Încărcare", "Unloading": "Descărcare", "Trailer swap": "Schimb remorcă",
         "extra_loading": "Încărcare suplimentară", "extra_unloading": "Descărcare parțială",
         "pickup": "Iei remorca încărcată", "do_pickup": "✅ AM LUAT REMORCA",
@@ -39,7 +39,7 @@ TEXT = {
         "eta_saved": "Mulțumim! Biroul a fost anunțat. Noua oră estimată: ",
     },
     "es": {
-        "title": "Tu viaje", "truck": "Camión", "trailer": "Remolque", "ref": "Referencia",
+        "title": "Tu viaje", "truck": "Camión", "trailer": "Remolque", "ref": "Referencia de carga", "unload_ref": "Referencia de descarga",
         "Loading": "Carga", "Unloading": "Descarga", "Trailer swap": "Cambio de remolque",
         "extra_loading": "Carga adicional", "extra_unloading": "Descarga parcial",
         "pickup": "Recoges el remolque cargado", "do_pickup": "✅ HE COGIDO EL REMOLQUE",
@@ -68,7 +68,7 @@ TEXT = {
         "eta_saved": "¡Gracias! La oficina ya lo sabe. Nueva hora estimada: ",
     },
     "ru": {
-        "title": "Твой рейс", "truck": "Машина", "trailer": "Прицеп", "ref": "Референс",
+        "title": "Твой рейс", "truck": "Машина", "trailer": "Прицеп", "ref": "Референс погрузки", "unload_ref": "Референс выгрузки",
         "Loading": "Загрузка", "Unloading": "Выгрузка", "Trailer swap": "Смена прицепа",
         "extra_loading": "Дополнительная загрузка", "extra_unloading": "Частичная выгрузка",
         "pickup": "Забираешь загруженный прицеп", "do_pickup": "✅ ПРИЦЕП ЗАБРАН",
@@ -97,7 +97,7 @@ TEXT = {
         "eta_saved": "Спасибо! Офис предупреждён. Новое ожидаемое время: ",
     },
     "uk": {
-        "title": "Твій рейс", "truck": "Машина", "trailer": "Причіп", "ref": "Референс",
+        "title": "Твій рейс", "truck": "Машина", "trailer": "Причіп", "ref": "Референс завантаження", "unload_ref": "Референс розвантаження",
         "Loading": "Завантаження", "Unloading": "Розвантаження", "Trailer swap": "Заміна причепа",
         "extra_loading": "Додаткове завантаження", "extra_unloading": "Часткове розвантаження",
         "pickup": "Забираєш завантажений причіп", "do_pickup": "✅ ПРИЧІП ЗАБРАНО",
@@ -211,6 +211,16 @@ def deca_form(base, stop, place, lang, dni):
             f'<a class="back" href="{base}?l={lang}">{t["deca_skip"]}</a></section>')
 
 
+def _reference(stop, order, t):
+    """The order's reference code for this stop: the loading one at the loading place, the unloading one at the
+    final unloading place (none at the other stops)."""
+    if stop["kind"] == "Loading" and stop["location_id"] == order.get("loading_id") and order.get("reference"):
+        return f'<div class="reference">{t["ref"]}: <b>{escape(order["reference"])}</b></div>'
+    if stop["kind"] == "Unloading" and stop["location_id"] == order.get("unloading_id") and order.get("unload_reference"):
+        return f'<div class="reference">{t["unload_ref"]}: <b>{escape(order["unload_reference"])}</b></div>'
+    return ""
+
+
 def render(token, order, stops, places, lang, confirm_seq=None, message="", error="", deca_seq=None, dni=""):
     t = TEXT[lang]
     base = f"/s/{escape(token)}"
@@ -222,8 +232,6 @@ def render(token, order, stops, places, lang, confirm_seq=None, message="", erro
                                                      for code, name in LANG_NAMES.items() if code != lang)
             + '</div></header>')
     parts = [head]
-    if order.get("reference"):
-        parts.append(f'<div class="reference">{t["ref"]}: <b>{escape(order["reference"])}</b></div>')
     if message:
         parts.append(f'<div class="message ok">{escape(message)}</div>')
     if error:
@@ -255,7 +263,7 @@ def render(token, order, stops, places, lang, confirm_seq=None, message="", erro
             + '</form></details>')
         parts.append(f'<section class="next"><div class="next-label">{t["next"]} · {_label(next_stop, stops, t, order)}</div>'
                      f'<div class="place">{escape(place["company"])}</div><div class="city">{escape(place["city"])}</div>'
-                     f'{control}<a class="map" href="{maps_url(place)}">{t["map"]}</a>{late}</section>')
+                     f'{_reference(next_stop, order, t)}{control}<a class="map" href="{maps_url(place)}">{t["map"]}</a>{late}</section>')
     # Once something is loaded: open the DeCA (to show at a control), or fill it in.
     loaded = [s for s in stops if s["kind"] == "Loading" and s["status"] == "Done"]
     # The driver who takes the trailer at a tractor change carries the load too: they can open the DeCA.
@@ -278,6 +286,7 @@ def render(token, order, stops, places, lang, confirm_seq=None, message="", erro
         goods = [stop.get("material", "").split(" · ")[-1] if stop.get("material") else "", _kg(stop["weight_kg"]) if stop.get("weight_kg") else ""]
         if any(goods):
             lines.append(f'<div>{t["material"]}: {escape(" · ".join(g for g in goods if g))}</div>')
+        lines.append(_reference(stop, order, t))
         lines.append(f'<div class="stop-time">{t["done"] + " " + _when(stop["done_at"], lang) if done and stop["done_at"] else t["planned"] + " " + _when(stop["planned_at"], lang)}</div>')
         lines.append(f'<a class="map small" href="{maps_url(place)}">{t["map"]}</a>')
         items.append(f'<li class="{"done" if done else ""}">{"".join(lines)}</li>')

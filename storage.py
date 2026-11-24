@@ -456,11 +456,13 @@ def initialize(target):
             basis TEXT NOT NULL, rate REAL NOT NULL, km REAL NOT NULL DEFAULT 0, price_date TEXT NOT NULL DEFAULT '',
             notes TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, source_id TEXT)""")
         db.execute("CREATE INDEX IF NOT EXISTS tariffs_route ON tariffs(from_id, to_id)")
-        # Reference code of a route (optional): copied to the order and shown to the driver on the stop link.
+        # Reference codes of a route (optional): `reference` for the loading, `unload_reference` for the unloading.
+        # Copied to the order and shown to the driver before "loaded" / "unloaded".
         for table in ("tariffs", "orders"):
             columns = {row["name"].lower() for row in db.execute(f"PRAGMA table_info({table})")}
-            if "reference" not in columns:
-                db.execute(f"ALTER TABLE {table} ADD COLUMN reference TEXT NOT NULL DEFAULT ''")
+            for column in ("reference", "unload_reference"):
+                if column not in columns:
+                    db.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         db.execute("CREATE UNIQUE INDEX IF NOT EXISTS tariffs_source ON tariffs(source_id)")
         columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(locations)")}
         if "transport_company" not in columns:
