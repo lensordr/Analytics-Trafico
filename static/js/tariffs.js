@@ -59,7 +59,7 @@ const clientRoutes=client=>(state.tariffs||[]).filter(t=>t.active&&t.client_id==
 // Reference codes under the loading and the unloading place (order and tariff forms). The driver sees each one
 // before confirming that stop.
 const REF_KINDS={reference:['Loading reference (optional)','loaded'],unload_reference:['Unloading reference (optional)','unloaded']};
-const referenceField=(name,value,hint)=>field(REF_KINDS[name][0],name,value||'','text','maxlength="80" autocomplete="off" placeholder="e.g. order / pickup code"',hint||`The driver sees it before confirming “${REF_KINDS[name][1]}”.`);
+const referenceField=(name,value,hint)=>`<div class="ref-field">${field(REF_KINDS[name][0],name,value||'','text','maxlength="80" autocomplete="off" placeholder="e.g. order / pickup code"',hint||`The driver sees it before confirming “${REF_KINDS[name][1]}”.`)}</div>`;
 const routeRefs=t=>[t.reference&&`load ${t.reference}`,t.unload_reference&&`unload ${t.unload_reference}`].filter(Boolean).join(' · ');
 function clientRoutesSection(draft){const counts=new Map();for(const t of state.tariffs||[])if(t.active)counts.set(t.client_id,(counts.get(t.client_id)||0)+1);
   const clients=[...counts].map(([id,n])=>({id,label:companyName(id),hint:`${n} saved ${n===1?'route':'routes'} · ${getLocation(id)?.city||''}`})).filter(c=>getLocation(c.id)).sort((a,b)=>a.label.localeCompare(b.label,'es'));
