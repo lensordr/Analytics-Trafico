@@ -10,7 +10,7 @@ from planner import ZONE, parse_time
 
 TEXT = {
     "ro": {
-        "title": "Cursa ta", "truck": "Camion", "trailer": "Remorcă",
+        "title": "Cursa ta", "truck": "Camion", "trailer": "Remorcă", "ref": "Referință",
         "Loading": "Încărcare", "Unloading": "Descărcare", "Trailer swap": "Schimb remorcă",
         "extra_loading": "Încărcare suplimentară", "extra_unloading": "Descărcare parțială",
         "pickup": "Iei remorca încărcată", "do_pickup": "✅ AM LUAT REMORCA",
@@ -39,7 +39,7 @@ TEXT = {
         "eta_saved": "Mulțumim! Biroul a fost anunțat. Noua oră estimată: ",
     },
     "es": {
-        "title": "Tu viaje", "truck": "Camión", "trailer": "Remolque",
+        "title": "Tu viaje", "truck": "Camión", "trailer": "Remolque", "ref": "Referencia",
         "Loading": "Carga", "Unloading": "Descarga", "Trailer swap": "Cambio de remolque",
         "extra_loading": "Carga adicional", "extra_unloading": "Descarga parcial",
         "pickup": "Recoges el remolque cargado", "do_pickup": "✅ HE COGIDO EL REMOLQUE",
@@ -68,7 +68,7 @@ TEXT = {
         "eta_saved": "¡Gracias! La oficina ya lo sabe. Nueva hora estimada: ",
     },
     "ru": {
-        "title": "Твой рейс", "truck": "Машина", "trailer": "Прицеп",
+        "title": "Твой рейс", "truck": "Машина", "trailer": "Прицеп", "ref": "Референс",
         "Loading": "Загрузка", "Unloading": "Выгрузка", "Trailer swap": "Смена прицепа",
         "extra_loading": "Дополнительная загрузка", "extra_unloading": "Частичная выгрузка",
         "pickup": "Забираешь загруженный прицеп", "do_pickup": "✅ ПРИЦЕП ЗАБРАН",
@@ -97,7 +97,7 @@ TEXT = {
         "eta_saved": "Спасибо! Офис предупреждён. Новое ожидаемое время: ",
     },
     "uk": {
-        "title": "Твій рейс", "truck": "Машина", "trailer": "Причіп",
+        "title": "Твій рейс", "truck": "Машина", "trailer": "Причіп", "ref": "Референс",
         "Loading": "Завантаження", "Unloading": "Розвантаження", "Trailer swap": "Заміна причепа",
         "extra_loading": "Додаткове завантаження", "extra_unloading": "Часткове розвантаження",
         "pickup": "Забираєш завантажений причіп", "do_pickup": "✅ ПРИЧІП ЗАБРАНО",
@@ -222,6 +222,8 @@ def render(token, order, stops, places, lang, confirm_seq=None, message="", erro
                                                      for code, name in LANG_NAMES.items() if code != lang)
             + '</div></header>')
     parts = [head]
+    if order.get("reference"):
+        parts.append(f'<div class="reference">{t["ref"]}: <b>{escape(order["reference"])}</b></div>')
     if message:
         parts.append(f'<div class="message ok">{escape(message)}</div>')
     if error:

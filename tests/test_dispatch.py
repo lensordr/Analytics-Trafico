@@ -126,7 +126,7 @@ class DispatchTests(unittest.TestCase):
         with connect(self.database) as db:
             client = app.save_master(db, "locations", {"company": "Ferimet", "city": "Granollers", "postal_code": "08401", "country": "Spain"})
             tariff = app.save_tariff(db, {"client_id": client, "from_id": self.a, "to_id": self.b, "basis": "loading_t",
-                                          "rate": "5.78", "km": "35", "price_date": "2026-02-17"})
+                                          "rate": "5.78", "km": "35", "price_date": "2026-02-17", "reference": "FER-GRA-01"})
             with self.assertRaisesRegex(ValueError, "already has an active tariff"):
                 app.save_tariff(db, {"client_id": client, "from_id": self.a, "to_id": self.b, "basis": "loading_t", "rate": 6})
             with self.assertRaisesRegex(ValueError, "rate must be"):
@@ -140,6 +140,7 @@ class DispatchTests(unittest.TestCase):
         # The client comes from the tariff; the order keeps its own copy of the rate.
         self.assertEqual((order["client_id"], order["tariff_id"], order["rate_basis"], order["rate"]), (client, tariff, "loading_t", 5.78))
         self.assertEqual(order_amount(order, stops), 138.72)
+        self.assertEqual(order["reference"], "FER-GRA-01")  # the route's reference code, when the order form has none
         stops[-1]["weight_kg"] = 23500
         self.assertEqual(order_amount({**order, "rate_basis": "unloading_t"}, stops), 138.72)  # billed on the 24 t minimum
         stops[-1]["weight_kg"] = 25000
@@ -157,6 +158,22 @@ class DispatchTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "another client"):
                 app.create_order(db, self.manual_payload(client_id=client, tariff_id=foreign, rate_basis="trip", rate=100,
                                                          pickup_at="2030-02-07T08:00", unloading_arrive_at="2030-02-08T15:00"))
+
+    def test_route_reference_on_order_and_driver_page(self):
+        import driver
+        from driverlinks import driver_order
+        with connect(self.database) as db:
+            client = app.save_master(db, "locations", {"company": "Ref Client", "city": "Vic", "postal_code": "08500", "country": "Spain"})
+            tariff = app.save_tariff(db, {"client_id": client, "from_id": self.a, "to_id": self.b, "basis": "trip", "rate": 300, "reference": "PO 4471"})
+            with_ref = app.create_order(db, self.manual_payload(tariff_id=tariff, rate_basis="trip", rate=300, reference="PO 4471-B"))
+            no_ref = app.create_order(db, self.manual_payload(reference="", pickup_at="2030-02-07T08:00", unloading_arrive_at="2030-02-08T15:00"))
+            self.assertEqual(app.item(db, "orders", with_ref)["reference"], "PO 4471-B")  # changed on this order
+            token = app.driver_link(db, {"order_id": with_ref})["token"]
+            order, stops, places = driver_order(db, token)
+            plain = driver_order(db, app.driver_link(db, {"order_id": no_ref})["token"])
+        self.assertIn("Referencia: <b>PO 4471-B</b>", driver.render(token, order, stops, places, "es"))
+        self.assertIn("Referință", driver.render(token, order, stops, places, "ro"))
+        self.assertNotIn('class="reference"', driver.render(token, *plain, "es"))
 
     def test_deca_document_pdf_and_qr(self):
         import deca, qr
