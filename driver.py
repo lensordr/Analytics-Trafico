@@ -1,15 +1,18 @@
 """Driver page: opened from the WhatsApp link (/s/<token>), no login, big buttons.
 
-Server-rendered HTML without JavaScript so it works on any phone. The driver sees only
-their own order and can confirm only the next stop, in two taps (button, then "Yes").
+Server-rendered HTML so it works on any phone (a small script only shrinks and sends the document photos).
+The driver sees only their own order and can confirm only the next stop, in two taps (button, then "Yes").
+After a loading or an unloading, the photo of the document comes first (photos.py).
 """
 from html import escape
 from urllib.parse import quote
 
+from photos import DOC_KINDS, needs_docs
 from planner import ZONE, parse_time
 
 TEXT = {
     "ro": {
+        "doc_Loading": "📄 Poza la documentul de încărcare", "doc_Unloading": "📄 Poza la documentul de descărcare", "doc_help": "CMR / albarán semnat. Fă poza drept, să se citească tot. Dacă sunt 2 documente, fă 2 poze.", "photo_take": "📷 FĂ POZA", "more": "＋ ÎNCĂ O POZĂ", "sent_n": "Poze trimise", "docs_done": "✅ GATA, AM TRIMIS TOT", "docs_later": "Nu am documentul acum · îl trimit mai târziu", "uploading": "Se trimite…", "upload_error": "Nu s-a trimis. Verifică semnalul și încearcă din nou.", "docs": "Documente", "docs_missing": "⚠ Lipsește poza documentului", "add_photo": "📷 Adaugă poză", "photos_word": "poze", "docs_first": "Întâi trimite poza la document, apoi vezi pasul următor.",
         "title": "Cursa ta", "truck": "Camion", "trailer": "Remorcă", "ref": "Referință încărcare", "unload_ref": "Referință descărcare",
         "Loading": "Încărcare", "Unloading": "Descărcare", "Trailer swap": "Schimb remorcă",
         "extra_loading": "Încărcare suplimentară", "extra_unloading": "Descărcare parțială",
@@ -39,6 +42,7 @@ TEXT = {
         "eta_saved": "Mulțumim! Biroul a fost anunțat. Noua oră estimată: ",
     },
     "es": {
+        "doc_Loading": "📄 Foto del documento de carga", "doc_Unloading": "📄 Foto del documento de descarga", "doc_help": "CMR / albarán firmado. Haz la foto recta y que se lea todo. Si hay 2 documentos, haz 2 fotos.", "photo_take": "📷 HACER FOTO", "more": "＋ OTRA FOTO", "sent_n": "Fotos enviadas", "docs_done": "✅ LISTO, TODO ENVIADO", "docs_later": "Ahora no tengo el documento · lo envío más tarde", "uploading": "Enviando…", "upload_error": "No se ha enviado. Revisa la cobertura y prueba otra vez.", "docs": "Documentos", "docs_missing": "⚠ Falta la foto del documento", "add_photo": "📷 Añadir foto", "photos_word": "fotos", "docs_first": "Primero envía la foto del documento, luego verás el siguiente paso.",
         "title": "Tu viaje", "truck": "Camión", "trailer": "Remolque", "ref": "Referencia de carga", "unload_ref": "Referencia de descarga",
         "Loading": "Carga", "Unloading": "Descarga", "Trailer swap": "Cambio de remolque",
         "extra_loading": "Carga adicional", "extra_unloading": "Descarga parcial",
@@ -68,6 +72,7 @@ TEXT = {
         "eta_saved": "¡Gracias! La oficina ya lo sabe. Nueva hora estimada: ",
     },
     "ru": {
+        "doc_Loading": "📄 Фото документа погрузки", "doc_Unloading": "📄 Фото документа выгрузки", "doc_help": "CMR / albarán с подписью. Фото ровно, чтобы всё читалось. Если 2 документа — сделай 2 фото.", "photo_take": "📷 СДЕЛАТЬ ФОТО", "more": "＋ ЕЩЁ ФОТО", "sent_n": "Отправлено фото", "docs_done": "✅ ГОТОВО, ВСЁ ОТПРАВИЛ", "docs_later": "Сейчас нет документа · отправлю позже", "uploading": "Отправка…", "upload_error": "Не отправилось. Проверь связь и попробуй снова.", "docs": "Документы", "docs_missing": "⚠ Нет фото документа", "add_photo": "📷 Добавить фото", "photos_word": "фото", "docs_first": "Сначала отправь фото документа, потом увидишь следующий шаг.",
         "title": "Твой рейс", "truck": "Машина", "trailer": "Прицеп", "ref": "Референс погрузки", "unload_ref": "Референс выгрузки",
         "Loading": "Загрузка", "Unloading": "Выгрузка", "Trailer swap": "Смена прицепа",
         "extra_loading": "Дополнительная загрузка", "extra_unloading": "Частичная выгрузка",
@@ -97,6 +102,7 @@ TEXT = {
         "eta_saved": "Спасибо! Офис предупреждён. Новое ожидаемое время: ",
     },
     "uk": {
+        "doc_Loading": "📄 Фото документа завантаження", "doc_Unloading": "📄 Фото документа розвантаження", "doc_help": "CMR / albarán з підписом. Фото рівно, щоб усе читалося. Якщо 2 документи — зроби 2 фото.", "photo_take": "📷 ЗРОБИТИ ФОТО", "more": "＋ ЩЕ ФОТО", "sent_n": "Надіслано фото", "docs_done": "✅ ГОТОВО, ВСЕ НАДІСЛАВ", "docs_later": "Зараз немає документа · надішлю пізніше", "uploading": "Надсилання…", "upload_error": "Не надіслалося. Перевір зв'язок і спробуй ще.", "docs": "Документи", "docs_missing": "⚠ Немає фото документа", "add_photo": "📷 Додати фото", "photos_word": "фото", "docs_first": "Спочатку надішли фото документа, потім побачиш наступний крок.",
         "title": "Твій рейс", "truck": "Машина", "trailer": "Причіп", "ref": "Референс завантаження", "unload_ref": "Референс розвантаження",
         "Loading": "Завантаження", "Unloading": "Розвантаження", "Trailer swap": "Заміна причепа",
         "extra_loading": "Додаткове завантаження", "extra_unloading": "Часткове розвантаження",
@@ -186,7 +192,8 @@ def _kg(value):
 def page(body, lang, title):
     return f"""<!doctype html>
 <html lang="{lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex"><title>{escape(title)}</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/driver.css"></head>
+<meta name="robots" content="noindex"><title>{escape(title)}</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/driver.css">
+<script src="/driver.js" defer></script></head>
 <body class="driver">{body}</body></html>"""
 
 
@@ -221,7 +228,25 @@ def _reference(stop, order, t):
     return ""
 
 
-def render(token, order, stops, places, lang, confirm_seq=None, message="", error="", deca_seq=None, dni=""):
+def docs_section(base, stop, place, lang, sent):
+    """The document photo step after a loading or unloading: take one or more photos, then "done" (or "later")."""
+    t = TEXT[lang]
+    hidden = f'<input type="hidden" name="action" value="docs"><input type="hidden" name="seq" value="{stop["seq"]}"><input type="hidden" name="l" value="{lang}">'
+    return (f'<section class="next docs" id="docs"><div class="next-label">{t[stop["kind"]]} · {escape(place["company"])}</div>'
+            f'<h2>{t["doc_" + stop["kind"]]}</h2><p class="docs-help">{t["doc_help"]}</p>'
+            + (f'<div class="docs-sent">✓ {t["sent_n"]}: <b>{sent}</b></div>' if sent else "")
+            + f'<label class="action photo{" more" if sent else ""}"><input type="file" accept="image/*" multiple hidden data-photo '
+              f'data-url="{base}/photo" data-seq="{stop["seq"]}" data-busy="{escape(t["uploading"])}" data-fail="{escape(t["upload_error"])}">'
+              f'{t["more"] if sent else t["photo_take"]}</label><p class="docs-status" role="status"></p>'
+            + (f'<form method="post" action="{base}">{hidden}<input type="hidden" name="mode" value="sent">'
+               f'<button class="action yes" type="submit">{t["docs_done"]}</button></form>' if sent else "")
+            + ("" if sent or stop.get("docs") else
+               f'<form method="post" action="{base}" class="docs-later">{hidden}<input type="hidden" name="mode" value="later">'
+               f'<button type="submit">{t["docs_later"]}</button></form>')
+            + '</section>')
+
+
+def render(token, order, stops, places, lang, confirm_seq=None, message="", error="", deca_seq=None, dni="", photos=None, photo_seq=None):
     t = TEXT[lang]
     base = f"/s/{escape(token)}"
     next_stop = next((s for s in stops if s["status"] != "Done"), None)
@@ -239,8 +264,16 @@ def render(token, order, stops, places, lang, confirm_seq=None, message="", erro
     deca_stop = next((s for s in stops if s["seq"] == deca_seq and s["kind"] == "Loading" and s["status"] == "Done"), None)
     if deca_stop and order["status"] != "Cancelled":
         parts.append(deca_form(base, deca_stop, places[deca_stop["location_id"]], lang, dni))
+    photos = photos or {}
+    # A confirmed loading / unloading without its document photo: that comes first (or the stop the driver chose).
+    docs_stop = next((s for s in stops if s["seq"] == photo_seq and s["kind"] in DOC_KINDS and s["status"] == "Done"), None) \
+        or next((s for s in stops if needs_docs(s)), None)
     if order["status"] == "Cancelled":
         parts.append(f'<div class="message warn">{t["cancelled"]}</div>')
+    elif docs_stop:
+        parts.append(docs_section(base, docs_stop, places[docs_stop["location_id"]], lang, photos.get(docs_stop["seq"], 0)))
+        if needs_docs(docs_stop) and next_stop:
+            parts.append(f'<p class="docs-first">{t["docs_first"]}</p>')
     elif next_stop is None:
         parts.append(f'<div class="message ok big">{t["finished"]}</div>')
     else:
@@ -287,6 +320,11 @@ def render(token, order, stops, places, lang, confirm_seq=None, message="", erro
         if any(goods):
             lines.append(f'<div>{t["material"]}: {escape(" · ".join(g for g in goods if g))}</div>')
         lines.append(_reference(stop, order, t))
+        if done and stop["kind"] in DOC_KINDS and stop.get("docs") != "n/a":  # n/a: confirmed before the photos existed
+            sent = photos.get(stop["seq"], 0)
+            lines.append(f'<div class="stop-docs{"" if sent else " missing"}">'
+                         + (f'📄 {t["docs"]}: {sent} {t["photos_word"]}' if sent else t["docs_missing"])
+                         + f' · <a href="{base}?l={lang}&photo={stop["seq"]}#docs">{t["add_photo"]}</a></div>')
         lines.append(f'<div class="stop-time">{t["done"] + " " + _when(stop["done_at"], lang) if done and stop["done_at"] else t["planned"] + " " + _when(stop["planned_at"], lang)}</div>')
         lines.append(f'<a class="map small" href="{maps_url(place)}">{t["map"]}</a>')
         items.append(f'<li class="{"done" if done else ""}">{"".join(lines)}</li>')

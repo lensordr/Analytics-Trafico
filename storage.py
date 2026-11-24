@@ -463,6 +463,17 @@ def initialize(target):
             for column in ("reference", "unload_reference"):
                 if column not in columns:
                     db.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+        # Document photos (CMR / albarán) sent by the driver after each loading and unloading (photos.py).
+        # order_stops.docs: '' = still to send, 'sent', 'later' (driver will send it), 'n/a' (stops done before this).
+        db.execute("""CREATE TABLE IF NOT EXISTS stop_photos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER NOT NULL REFERENCES orders(id), seq INTEGER NOT NULL,
+            kind TEXT NOT NULL, n INTEGER NOT NULL, taken_at TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0,
+            data BLOB, downloaded_at TEXT)""")
+        db.execute("CREATE INDEX IF NOT EXISTS stop_photos_order ON stop_photos(order_id, seq)")
+        columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(order_stops)")}
+        if "docs" not in columns:
+            db.execute("ALTER TABLE order_stops ADD COLUMN docs TEXT NOT NULL DEFAULT ''")
+            db.execute("UPDATE order_stops SET docs='n/a' WHERE status='Done'")
         db.execute("CREATE UNIQUE INDEX IF NOT EXISTS tariffs_source ON tariffs(source_id)")
         columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(locations)")}
         if "transport_company" not in columns:

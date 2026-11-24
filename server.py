@@ -33,6 +33,7 @@ from itv import delete_itv, import_itv, save_itv
 from masters import archive_master, restore_master, save_km_list, save_master, service_done
 from materials import delete_material, save_material
 from tariffs import delete_tariff, save_tariff
+import photos
 from nearby import log_contact, nearby_companies
 from nextloads import next_loads
 from orders import assign_tractor, build_plan, carry_clock, create_order, set_stop_status, update_stop_eta, uses_rules
@@ -179,6 +180,9 @@ class Handler(BaseHTTPRequestHandler):
             pass  # the page must open even if the view cannot be recorded
         if query.get("ok") and not message and not error:
             message = driver.TEXT[lang]["saved"]
+        with connect(self.server.database) as db:
+            sent = photos.counts(db, order["id"])
+        photo_seq = int(query["photo"]) if query.get("photo", "").isdigit() else None
         if query.get("eta") and not message and not error:
             upcoming = next((s for s in stops if s["status"] != "Done"), None)
             message = driver.TEXT[lang]["eta_saved"] + (driver._when(upcoming["planned_at"], lang) if upcoming else "")
@@ -193,8 +197,27 @@ class Handler(BaseHTTPRequestHandler):
             with connect(self.server.database) as db:
                 row = db.execute("SELECT dni_nie FROM drivers WHERE id=?", (order["driver_id"],)).fetchone()
                 dni = row["dni_nie"] if row else ""
-        self.send_body(200, driver.render(token, order, stops, places, lang, confirm, message, error, deca_seq, dni),
+        self.send_body(200, driver.render(token, order, stops, places, lang, confirm, message, error, deca_seq, dni, sent, photo_seq),
                        "text/html; charset=utf-8")
+
+    def driver_photo(self, token):
+        """One document photo from the driver page (JSON {seq, image}); the phone has already made it small."""
+        length = int(self.headers.get("Content-Length","0") or 0)
+        if not 0 < length < 2_200_000:
+            return self.send_body(413, {"error": "photo"})
+        try:
+            data = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            return self.send_body(400, {"error": "photo"})
+        with connect(self.server.database, fresh=True) as db:
+            order, stops, _ = driver_order(db, token)
+            if order is None or order["status"] == "Cancelled":
+                return self.send_body(404, {"error": "link"})
+            try:
+                sent = photos.save_photo(db, order, stops, data.get("seq"), data.get("image"))
+            except ValueError as error:
+                return self.send_body(400, {"error": str(error)})
+        return self.send_body(200, {"sent": sent})
 
     def driver_post(self,token):
         length = int(self.headers.get("Content-Length","0") or 0)
@@ -204,6 +227,13 @@ class Handler(BaseHTTPRequestHandler):
             order, stops, _ = driver_order(db, token)
             if order is None:
                 return self.send_body(404, driver.missing_page(lang), "text/html; charset=utf-8")
+            if form.get("action") == "docs":
+                try:
+                    stop = photos.finish(db, order, stops, form.get("seq"), form.get("mode"))
+                except ValueError:
+                    return self.redirect(f"/s/{token}?l={lang}#docs")
+                # After the loading document: the optional DeCA form (material, weight, DNI/NIE).
+                return self.redirect(f"/s/{token}?l={lang}" + (f"&deca={stop['seq']}" if stop["kind"] == "Loading" and form.get("mode") == "sent" else ""))
             if form.get("action") == "deca":
                 try:
                     ready = driver_deca(db, order, stops, form)
@@ -227,8 +257,8 @@ class Handler(BaseHTTPRequestHandler):
                 set_stop_status(db, {"order_id": order["id"], "seq": next_stop["seq"]})
             except ValueError as error:
                 return self.driver_get(token, error=str(error), lang=lang)
-        # After a loading: offer the optional DeCA form (material, weight, DNI/NIE).
-        extra = f"&deca={next_stop['seq']}" if next_stop["kind"] == "Loading" else ""
+        # After a loading or unloading: the document photo first (then, after a loading, the optional DeCA form).
+        extra = "#docs" if next_stop["kind"] in photos.DOC_KINDS else ""
         return self.redirect(f"/s/{token}?l={lang}&ok=1{extra}")
 
     def signed_in(self):
@@ -248,6 +278,7 @@ class Handler(BaseHTTPRequestHandler):
             state["link_opens"] = link_opens(db)
             state["eta_reports"] = eta_reports(db)
             state["load_requests"] = load_requests(db)
+            state["stop_photos"] = photos.photo_list(db)
         folder = getattr(self.server,"backup_folder",None)
         newest = autobackup.latest(folder) if folder else None
         state["auto_backup"] = {"enabled": bool(folder), "latest": stamp(datetime.fromtimestamp(newest.stat().st_mtime,UTC)) if newest else None,
@@ -262,7 +293,7 @@ class Handler(BaseHTTPRequestHandler):
                       for t in rows(db, "trucks") if not t["archived_at"] and t["own_fleet"]]
             itv = rows(db, "itv_vehicles")
         return {"role": "service", "trucks": trucks, "itv": itv, "drivers": [], "trailers": [], "locations": [], "orders": [],
-                "materials": [], "tariffs": [], "settings": {}, "link_opens": {}, "eta_reports": [], "load_requests": [],
+                "materials": [], "tariffs": [], "settings": {}, "link_opens": {}, "eta_reports": [], "load_requests": [], "stop_photos": [],
                 "auto_backup": {"enabled": False, "latest": None, "count": 0}}
 
     # ---- client order page: the secret link identifies the client; only its own routes, no prices
@@ -471,7 +502,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("X-Robots-Tag", "noindex")
             self.end_headers()
             return self.wfile.write(body)
-        if path not in ("/style.css","/driver.css","/client.css","/client.js")+PWA_FILES and not self.signed_in():
+        if path not in ("/style.css","/driver.css","/driver.js","/client.css","/client.js")+PWA_FILES and not self.signed_in():
             return self.send_body(401,{"error":"Please sign in again."}) if path.startswith("/api/") else self.redirect("/login")
         if self.service_user() and path.startswith(("/api/", "/tiles/")) and path != "/api/state":
             return self.send_body(403, {"error": "This account can only see ITV and maintenance."})
@@ -496,6 +527,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             state["now"] = stamp(datetime.now(UTC))
             return self.send_body(200,state,headers={"ETag":tag})
+        if path == "/api/photo":
+            try:
+                with connect(self.server.database) as db:
+                    body = photos.photo_bytes(db, dict(parse_qsl(urlsplit(self.path).query)).get("id"))
+            except ValueError as error:
+                return self.send_body(404, {"error": str(error)})
+            return self.send_body(200, body, "image/jpeg", {"Cache-Control": "private, max-age=86400"})
         if path == "/api/deca.pdf":
             query = dict(parse_qsl(urlsplit(self.path).query))
             try:
@@ -526,7 +564,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.wfile.write(body)
         files = {"/manifest.webmanifest":("manifest.webmanifest","application/manifest+json"),"/sw.js":("sw.js","text/javascript; charset=utf-8"),
                  "/icon-180.png":("icon-180.png","image/png"),"/icon-192.png":("icon-192.png","image/png"),"/icon-512.png":("icon-512.png","image/png"),
-                 "/":("index.html","text/html; charset=utf-8"),"/analytics.js":("analytics.js","text/javascript; charset=utf-8"),"/search-select.js":("search-select.js","text/javascript; charset=utf-8"),"/style.css":("style.css","text/css; charset=utf-8"),"/driver.css":("driver.css","text/css; charset=utf-8"),"/client.css":("client.css","text/css; charset=utf-8"),"/client.js":("client.js","text/javascript; charset=utf-8")}
+                 "/":("index.html","text/html; charset=utf-8"),"/analytics.js":("analytics.js","text/javascript; charset=utf-8"),"/search-select.js":("search-select.js","text/javascript; charset=utf-8"),"/style.css":("style.css","text/css; charset=utf-8"),"/driver.css":("driver.css","text/css; charset=utf-8"),"/client.css":("client.css","text/css; charset=utf-8"),"/client.js":("client.js","text/javascript; charset=utf-8"),"/driver.js":("driver.js","text/javascript; charset=utf-8")}
         # Interface modules: static/js/<name>.js (names checked, so no other file can be read).
         if re.fullmatch(r"/js/[a-z][a-z-]*\.js", path) and (ROOT/"static"/path.lstrip("/")).is_file():
             return self.send_static(ROOT/"static"/path.lstrip("/"),"text/javascript; charset=utf-8")
@@ -540,6 +578,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.valid_host() and urlsplit(self.path).path == "/login":
             return self.handle_login()
+        if self.valid_host() and re.fullmatch(r"/s/[A-Za-z0-9_-]{8,64}/photo", urlsplit(self.path).path):
+            return self.driver_photo(urlsplit(self.path).path[3:-6])
         if self.valid_host() and urlsplit(self.path).path.startswith("/s/"):
             return self.driver_post(urlsplit(self.path).path[3:])
         if self.valid_host() and urlsplit(self.path).path.startswith("/c/"):

@@ -42,3 +42,11 @@ body.driver{margin:0;background:#f2f5f2;color:#142b21;font-family:system-ui,"Seg
 .driver details.late p{margin:4px 0 10px;color:#5d5d5d}.driver .late-option{display:block;width:100%;margin:0 0 10px;padding:16px;border:0;border-radius:12px;background:#a86116;color:#fff;font-size:19px;font-weight:700;font-family:inherit;cursor:pointer}
 .driver .reference{margin:10px 0 12px;padding:10px 14px;border-radius:12px;background:#fff6e3;color:#5a3d05;font-size:17px}.driver .reference b{font-size:20px;letter-spacing:.02em;user-select:all}
 .driver .stops .reference{margin:6px 0;padding:6px 10px;font-size:14px}.driver .stops .reference b{font-size:15px}
+.driver .docs h2{margin:6px 0 4px;font-size:21px}.driver .docs-help{margin:0 0 12px;color:#3d5148}
+.driver .action.photo{background:#174ea6;margin-bottom:6px}.driver .action.photo.more{background:#fff;color:#174ea6;border:2px solid #174ea6;font-size:20px;padding:16px 12px}
+.driver .action.photo.busy{opacity:.6;pointer-events:none}
+.driver .docs-sent{margin:0 0 10px;padding:10px 14px;border-radius:12px;background:#e3f4ea;color:#0d5236;font-size:17px}
+.driver .docs-status{min-height:1.2em;margin:4px 0 12px;font-weight:700;color:#174ea6}.driver .docs-status.fail{color:#8a1c12}
+.driver .docs-later{margin-top:10px;text-align:center}.driver .docs-later button{border:0;background:none;color:#5e7066;text-decoration:underline;font:inherit;font-size:15px;cursor:pointer}
+.driver .docs-first{text-align:center;color:#5e7066;margin:-4px 0 14px}
+.driver .stop-docs{margin:6px 0;font-size:14px;color:#0d5236}.driver .stop-docs.missing{color:#8a1c12;font-weight:700}

@@ -1,3 +1,4 @@
+import base64
 import importlib
 import json
 from pathlib import Path
@@ -11,6 +12,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import app
+import photos
 from planner import Clock, parse_time, stamp, trip_plan, week_key
 from storage import connect, initialize, rows
 from upcoming import weekly_availability, subtract_bookings
@@ -176,7 +178,7 @@ class DispatchTests(unittest.TestCase):
         # The loading code above the "loaded" button, the unloading code on the unloading stop.
         self.assertLess(page.index("Referencia de carga: <b>PO 4471-B</b>"), page.index('class="action"'))
         self.assertIn("Referencia de descarga: <b>DESC-9</b>", page)
-        done = driver.render(token, order, [{**s, "status": "Done"} if s["kind"] == "Loading" else s for s in stops], places, "es")
+        done = driver.render(token, order, [{**s, "status": "Done", "docs": "sent"} if s["kind"] == "Loading" else s for s in stops], places, "es")
         self.assertLess(done.index("Referencia de descarga"), done.index('class="action"'))
         self.assertIn("Referință", driver.render(token, order, stops, places, "ro"))
         self.assertNotIn('class="reference"', driver.render(token, *plain, "es"))
@@ -459,6 +461,7 @@ class DispatchTests(unittest.TestCase):
         with connect(self.database) as db:
             order = app.create_order(db,self.manual_payload())
             app.set_stop_status(db,{"order_id":order,"seq":1,"done_at":"2030-01-07T08:30"})
+            db.execute("UPDATE order_stops SET docs='sent' WHERE order_id=? AND seq=1",(order,))  # document photo sent
             token = app.driver_link(db,{"order_id":order})["token"]
         def report(delay):
             with connect(self.database) as db:
@@ -628,7 +631,7 @@ class DispatchTests(unittest.TestCase):
             b, b_stops, b_places = driver_order(db,second_link)
         self.assertEqual(([s["seq"] for s in a_stops],[s["seq"] for s in b_stops]),([1,2],[2,3]))
         self.assertEqual((a["plate"],b["plate"]),("TEST-001","RELAY-2"))
-        self.assertIn("HE DEJADO EL REMOLQUE",driver.render(first_link,a,[{**s,"status":"Done"} if s["seq"]==1 else s for s in a_stops],a_places,"es"))
+        self.assertIn("HE DEJADO EL REMOLQUE",driver.render(first_link,a,[{**s,"status":"Done","docs":"sent"} if s["seq"]==1 else s for s in a_stops],a_places,"es"))
         self.assertIn("HE COGIDO EL REMOLQUE",driver.render(second_link,b,b_stops,b_places,"es"))
         for seq in (1,2):
             with connect(self.database) as db:
@@ -1466,8 +1469,30 @@ class DispatchTests(unittest.TestCase):
             with connect(self.database) as db:
                 self.assertEqual([s["status"] for s in app.order_stop_rows(db, order_id)], ["Planned", "Planned"])
             status, headers, _ = call("POST", f"/s/{token}", b"seq=1&l=ro")
-            # After a loading the optional DeCA form is offered.
-            self.assertEqual((status, headers["Location"]), (303, f"/s/{token}?l=ro&ok=1&deca=1"))
+            # After a loading: the photo of the loading document comes first; the next stop waits for it.
+            self.assertEqual((status, headers["Location"]), (303, f"/s/{token}?l=ro&ok=1#docs"))
+            page = call("GET", f"/s/{token}?l=ro&ok=1")[2]
+            self.assertIn("Poza la documentul de încărcare", page)
+            self.assertNotIn("AM DESCĂRCAT", page)
+            self.assertEqual(call("POST", f"/s/{token}", b"action=docs&seq=1&mode=sent&l=ro")[1]["Location"], f"/s/{token}?l=ro#docs")  # no photo yet
+            jpeg = "data:image/jpeg;base64," + base64.b64encode(b"\xff\xd8\xff\xe0" + b"x" * 500).decode()
+            self.assertEqual(call("POST", f"/s/{token}/photo", json.dumps({"seq": 1, "image": "data:image/png;base64,AAAA"}).encode())[0], 400)
+            self.assertEqual(call("POST", f"/s/{token}/photo", json.dumps({"seq": 2, "image": jpeg}).encode())[0], 400)  # not unloaded yet
+            for n in (1, 2):
+                self.assertEqual(json.loads(call("POST", f"/s/{token}/photo", json.dumps({"seq": 1, "image": jpeg}).encode())[2]), {"sent": n})
+            self.assertIn("Poze trimise: <b>2</b>", call("GET", f"/s/{token}?l=ro")[2])
+            status, headers, _ = call("POST", f"/s/{token}", b"action=docs&seq=1&mode=sent&l=ro")
+            # Then the optional DeCA form is offered.
+            self.assertEqual((status, headers["Location"]), (303, f"/s/{token}?l=ro&deca=1"))
+            self.assertIn("Documente: 2 poze", call("GET", f"/s/{token}?l=ro")[2])
+            with connect(self.database) as db:
+                listed = [p for p in photos.photo_list(db) if p["order_id"] == order_id]
+                self.assertEqual([(p["seq"], p["n"], p["stored"]) for p in listed], [(1, 1, 1), (1, 2, 1)])
+                self.assertTrue(photos.photo_bytes(db, listed[0]["id"]).startswith(b"\xff\xd8\xff"))
+                db.execute("UPDATE stop_photos SET downloaded_at='2030-01-01T00:00:00+00:00' WHERE order_id=?", (order_id,))
+                self.assertEqual(photos.empty_old(db, parse_time("2030-03-01T00:00")), 2)  # copied to the PC long ago: emptied
+                with self.assertRaisesRegex(ValueError, "OneDrive"):
+                    photos.photo_bytes(db, listed[0]["id"])
             page = call("GET", f"/s/{token}?l=ro&ok=1&deca=1")[2]
             self.assertIn("AM DESCĂRCAT", page)
             self.assertIn("SALVEAZĂ ȘI FĂ DeCA", page)
@@ -1497,7 +1522,12 @@ class DispatchTests(unittest.TestCase):
             with connect(self.database) as db:
                 self.assertEqual([s["status"] for s in app.order_stop_rows(db, order_id)], ["Done", "Done"])
                 self.assertEqual(app.item(db, "orders", order_id)["status"], "Completed")
-            self.assertIn("finalizată", call("GET", f"/s/{token}")[2])
+            # After the unloading: its document photo first; "later" lets the driver finish (the office sees it missing).
+            self.assertIn("Poza la documentul de descărcare", call("GET", f"/s/{token}")[2])
+            self.assertEqual(call("POST", f"/s/{token}", b"action=docs&seq=2&mode=later&l=ro")[1]["Location"], f"/s/{token}?l=ro")
+            page = call("GET", f"/s/{token}")[2]
+            self.assertIn("finalizată", page)
+            self.assertIn("Lipsește poza documentului", page)
             # The dispatcher API still needs the password.
             self.assertEqual(call("GET", "/api/state")[0], 401)
             # A DeCA QR link opens without signing in; an unknown one is simply not found (no login page).
