@@ -24,7 +24,7 @@ import driver
 import oauth
 import routing
 from auth import Auth
-from clientlinks import client_by_token, client_link, client_requests, client_routes, link_order, load_requests, request_place, revoke_client_link, set_request_status, submit_request
+from clientlinks import client_by_token, client_history, client_link, client_requests, editable_request, request_form, client_routes, link_order, load_requests, match_request, order_cancelled, request_place, revoke_client_link, set_request_status, submit_request
 from common import item, text
 from names import apply_name_fixes, name_fixes
 from market import import_witruck, key_clients, usual_trucks
@@ -276,20 +276,30 @@ class Handler(BaseHTTPRequestHandler):
             routes = client_routes(db, company["id"])
             places = {row["id"]: row for row in db.execute("SELECT id, company, city FROM locations")}
             history = client_requests(db, company["id"])
+            transports = client_history(db, company["id"])
+            if query.get("edit") and form is None and not error:
+                try:
+                    form = request_form(db, company, editable_request(db, company, query["edit"]))
+                except ValueError as fault:
+                    error = client.TEXT[lang]["errors"][str(fault)]
         label = lambda pid, typed: f'{places[pid]["company"]} ({places[pid]["city"]})' if pid in places else " ".join(typed.split())[:60]
         ids = [order_id for request in history for order_id in request["order_ids"]]
         with connect(self.server.database) as db:
             orders = {row["id"]: row for row in db.execute(
                 f"SELECT id, plate, trailer, pickup_at, status FROM orders WHERE id IN ({','.join('?' * len(ids))})", ids)} if ids else {}
         for request in history:
-            request["route"] = f'{label(request["from_id"], request["from_text"])} → {label(request["to_id"], request["to_text"])}'
+            typed = lambda side: f'{request[side + "_place"]["company"]} ({request[side + "_place"]["city"]})' if request.get(side + "_place") else request[side + "_text"]
+            request["route"] = f'{label(request["from_id"], typed("from"))} → {label(request["to_id"], typed("to"))}'
             # The assembly that loads (tractor + trailer) and the day: shown to the client once the order is planned.
             request["vehicles"] = [{"plate": o["plate"], "trailer": o["trailer"] or "", "day": parse_time(o["pickup_at"]).astimezone(ZONE).date().isoformat()}
                                    for o in (orders.get(i) for i in request["order_ids"]) if o and o["status"] != "Cancelled"]
         if query.get("ok") and not message and not error:
-            message = client.TEXT[lang]["sent"]
+            message = client.TEXT[lang]["saved" if query.get("ok") == "2" else "sent"]
+        for row in transports:
+            row["day"] = parse_time(row["pickup_at"]).astimezone(ZONE).date().isoformat()
+        tab = "history" if query.get("tab") == "history" else "new"
         today = datetime.now(UTC).astimezone(ZONE).date().isoformat()
-        self.send_body(200 if not error else 400, client.render(token, company, routes, history, lang, today, message, error, form),
+        self.send_body(200 if not error else 400, client.render(token, company, routes, history, lang, today, message, error, form, tab, transports),
                        "text/html; charset=utf-8", {"X-Robots-Tag": "noindex"})
 
     def client_post(self, token):
@@ -305,7 +315,7 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as error:
                 key = str(error)
                 return self.client_get(token, error=client.TEXT[lang]["errors"].get(key, key), form=form, lang=lang)
-        return self.redirect(f"/c/{token}?l={lang}&ok=1")
+        return self.redirect(f"/c/{token}?l={lang}&ok={2 if form.get('request_id') else 1}")
 
     # ---- Claude connector (MCP): OAuth sign-in with the dispatcher's password, then read-only tools at /mcp
     def base_url(self):
@@ -563,8 +573,11 @@ class Handler(BaseHTTPRequestHandler):
                     result = {"route":route,"plan":plan}
                 elif path == "/api/orders":
                     result = {"id":create_order(db,data)}
+                    user = self.auth.user(self.headers.get("Cookie")) or ""
                     if data.get("request_id"):  # created from a client request: link them
-                        link_order(db,data["request_id"],result["id"],self.auth.user(self.headers.get("Cookie")) or "")
+                        link_order(db,data["request_id"],result["id"],user)
+                    else:  # made by hand for a client who asked for it: linked too, so the client sees the truck
+                        match_request(db,result["id"],user)
                 elif path == "/api/witruck-import":
                     result = import_witruck(db,data)
                 elif path == "/api/key-clients":
@@ -597,6 +610,7 @@ class Handler(BaseHTTPRequestHandler):
                         if later:
                             raise ValueError("Cancel this driver's later orders first; their clocks depend on this order.")
                     db.execute("UPDATE orders SET status=? WHERE id=?",(status,order["id"]))
+                    order_cancelled(db,order["id"])
                     result = {"ok":True}
                 elif path == "/api/stop-status":
                     result = set_stop_status(db,data)

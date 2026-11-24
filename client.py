@@ -21,14 +21,16 @@ TEXT = {
         "sent": "¡Solicitud enviada! La oficina la ha recibido y te confirmará el camión.",
         "yours": "Tus últimas solicitudes", "none": "Todavía no has enviado ninguna solicitud.",
         "status": {"New": "Recibida", "Planned": "Confirmada", "Rejected": "No podemos"},
-        "trucks_short": "camión(es)", "new_route": "Ruta nueva", "truck": "Camión", "trailer": "remolque", "loads": "carga el",
+        "truck_pending": "Camión por asignar",
+        "tab_new": "Nueva solicitud", "tab_history": "Historial", "edit": "✎ Editar", "editing": "Estás cambiando tu solicitud del", "save": "Guardar cambios", "cancel_edit": "Cancelar", "saved": "Cambios guardados. La oficina ve la solicitud actualizada.", "locked": "Confirmada: para cambiarla, llámanos.", "history_title": "Tus transportes con nosotros", "history_help": "Último año. Para un transporte nuevo, usa «Nueva solicitud».", "history_none": "Todavía no hay transportes.", "order_status": {"Planned": "Planificado", "In transit": "En camino", "Completed": "Entregado"}, "trucks_short": "camión(es)", "new_route": "Ruta nueva", "truck": "Camión", "trailer": "remolque", "loads": "carga el",
         "errors": {"choose_place": "Elige el punto de carga y el de descarga de la lista.",
                    "other_place": "Ruta nueva: escribe empresa, dirección, código postal y población.",
                    "postal_code": "Ruta nueva: el código postal no es válido.",
                    "load_date": "Elige un día de carga válido (desde hoy hasta 4 meses).",
                    "unload_by": "El día de descarga no puede ser anterior al de carga.",
                    "trucks": "Número de camiones: de 1 a 30.",
-                   "too_many": "Demasiadas solicitudes hoy. Llámanos o escríbenos por WhatsApp."},
+                   "too_many": "Demasiadas solicitudes hoy. Llámanos o escríbenos por WhatsApp.",
+                   "not_editable": "Esta solicitud ya no se puede cambiar: la oficina ya la tiene en marcha. Llámanos o escríbenos por WhatsApp."},
         "missing": "Este enlace ya no funciona. Pide uno nuevo a la oficina.",
         "no_routes": "Aún no tienes rutas guardadas: escribe la carga y la descarga nuevas.",
     },
@@ -49,14 +51,16 @@ TEXT = {
         "sent": "Request sent! The office has it and will confirm the truck.",
         "yours": "Your latest requests", "none": "You have not sent any request yet.",
         "status": {"New": "Received", "Planned": "Confirmed", "Rejected": "We cannot"},
-        "trucks_short": "truck(s)", "new_route": "New route", "truck": "Truck", "trailer": "trailer", "loads": "loads on",
+        "truck_pending": "Truck to be assigned",
+        "tab_new": "New request", "tab_history": "History", "edit": "✎ Edit", "editing": "You are changing your request of", "save": "Save changes", "cancel_edit": "Cancel", "saved": "Changes saved. The office sees the updated request.", "locked": "Confirmed: to change it, call us.", "history_title": "Your transports with us", "history_help": "Last year. For a new transport, use “New request”.", "history_none": "No transports yet.", "order_status": {"Planned": "Planned", "In transit": "On the way", "Completed": "Delivered"}, "trucks_short": "truck(s)", "new_route": "New route", "truck": "Truck", "trailer": "trailer", "loads": "loads on",
         "errors": {"choose_place": "Choose the loading and the unloading point from the list.",
                    "other_place": "New route: type company, address, postal code and town.",
                    "postal_code": "New route: the postal code is not valid.",
                    "load_date": "Choose a valid loading day (from today up to 4 months).",
                    "unload_by": "The unloading day cannot be before the loading day.",
                    "trucks": "Number of trucks: from 1 to 30.",
-                   "too_many": "Too many requests today. Call us or write on WhatsApp."},
+                   "too_many": "Too many requests today. Call us or write on WhatsApp.",
+                   "not_editable": "This request can no longer be changed: the office is already handling it. Call us or write on WhatsApp."},
         "missing": "This link no longer works. Ask the office for a new one.",
         "no_routes": "You have no saved routes yet: type the new loading and unloading.",
     },
@@ -77,14 +81,16 @@ TEXT = {
         "sent": "Demande envoyée ! Le bureau l'a reçue et vous confirmera le camion.",
         "yours": "Vos dernières demandes", "none": "Vous n'avez encore envoyé aucune demande.",
         "status": {"New": "Reçue", "Planned": "Confirmée", "Rejected": "Impossible"},
-        "trucks_short": "camion(s)", "new_route": "Nouvelle route", "truck": "Camion", "trailer": "remorque", "loads": "charge le",
+        "truck_pending": "Camion à attribuer",
+        "tab_new": "Nouvelle demande", "tab_history": "Historique", "edit": "✎ Modifier", "editing": "Vous modifiez votre demande du", "save": "Enregistrer", "cancel_edit": "Annuler", "saved": "Modifications enregistrées. Le bureau voit la demande mise à jour.", "locked": "Confirmée : pour la modifier, appelez-nous.", "history_title": "Vos transports avec nous", "history_help": "Dernière année. Pour un nouveau transport, utilisez « Nouvelle demande ».", "history_none": "Pas encore de transports.", "order_status": {"Planned": "Planifié", "In transit": "En route", "Completed": "Livré"}, "trucks_short": "camion(s)", "new_route": "Nouvelle route", "truck": "Camion", "trailer": "remorque", "loads": "charge le",
         "errors": {"choose_place": "Choisissez le lieu de chargement et celui de déchargement dans la liste.",
                    "other_place": "Nouvelle route : indiquez société, adresse, code postal et ville.",
                    "postal_code": "Nouvelle route : le code postal n'est pas valide.",
                    "load_date": "Choisissez un jour de chargement valide (d'aujourd'hui à 4 mois).",
                    "unload_by": "Le jour de déchargement ne peut pas être avant celui du chargement.",
                    "trucks": "Nombre de camions : de 1 à 30.",
-                   "too_many": "Trop de demandes aujourd'hui. Appelez-nous ou écrivez-nous sur WhatsApp."},
+                   "too_many": "Trop de demandes aujourd'hui. Appelez-nous ou écrivez-nous sur WhatsApp.",
+                   "not_editable": "Cette demande ne peut plus être modifiée : le bureau la traite déjà. Appelez-nous ou écrivez-nous sur WhatsApp."},
         "missing": "Ce lien ne fonctionne plus. Demandez-en un nouveau au bureau.",
         "no_routes": "Vous n'avez pas encore de routes enregistrées : saisissez le nouveau chargement et le nouveau déchargement.",
     },
@@ -118,7 +124,7 @@ def _label(place):
     return f'{place["company"]} · {place["city"]}' + ("" if place["country"] in ("Spain", "España") else f' ({place["country"]})')
 
 
-def render(token, client, routes, requests, lang, today, message="", error="", form=None):
+def render(token, client, routes, requests, lang, today, message="", error="", form=None, tab="new", transports=()):
     t, form = TEXT[lang], form or {}
     base = f"/c/{token}"
     value = lambda key, default="": escape(str(form.get(key, default)))
@@ -162,6 +168,9 @@ def render(token, client, routes, requests, lang, today, message="", error="", f
         + "".join(f'<div class="vehicle">🚛 {t["truck"]} <strong>{escape(v["plate"])}</strong>'
                   + (f' + {t["trailer"]} <strong>{escape(v["trailer"])}</strong>' if v["trailer"] else "")
                   + f' · {t["loads"]} {_day(v["day"])}</div>' for v in r.get("vehicles", []))
+        + (f'<div class="vehicle pending">🚛 {t["truck_pending"]}</div>' if r["status"] == "Planned" and not r.get("vehicles") else "")
+        + (f'<a class="edit-request" href="{base}?l={lang}&edit={r["id"]}#request-form">{t["edit"]}</a>' if r["status"] == "New" and not r["order_ids"]
+           else f'<small class="locked">{t["locked"]}</small>' if r["status"] == "Planned" else "")
         + "</li>" for r in requests) or f'<li class="muted">{t["none"]}</li>'
     usual = sorted((r for r in routes if r["trips"]), key=lambda r: -r["trips"])[:6]
     usual_html = (f'<section class="card usual"><h2>{t["usual"]}</h2><p class="hint">{t["usual_help"]}</p>'
@@ -169,15 +178,29 @@ def render(token, client, routes, requests, lang, today, message="", error="", f
                             f'<strong>{escape(r["from"]["company"])}</strong> <small>{escape(r["from"]["city"])}</small>'
                             f'<span>→</span><strong>{escape(r["to"]["company"])}</strong> <small>{escape(r["to"]["city"])}</small></button>'
                             for r in usual) + '</section>') if usual else ""
-    langs = " ".join(f'<a class="lang{" on" if code == lang else ""}" href="{base}?l={code}">{code.upper()}</a>' for code in TEXT)
+    langs = " ".join(f'<a class="lang{" on" if code == lang else ""}" href="{base}?l={code}{"&tab=history" if tab == "history" else ""}">{code.upper()}</a>' for code in TEXT)
+    tabs = ('<nav class="tabs">' + "".join(f'<a class="tab{" on" if key == tab else ""}" href="{base}?l={lang}{"&tab=history" if key == "history" else ""}">{t["tab_" + key]}</a>'
+                                           for key in ("new", "history")) + '</nav>')
+    editing = form.get("request_id")
+    if tab == "history":
+        rows = "".join(f'<li><span class="badge {o["status"].lower().replace(" ", "-")}">{t["order_status"].get(o["status"], o["status"])}</span>'
+                       f'<strong>{escape(_day(o["day"]))}</strong><br><small>{escape(o["from_company"])} ({escape(o["from_city"])}) → '
+                       f'{escape(o["to_company"])} ({escape(o["to_city"])})</small>'
+                       f'<div class="vehicle">🚛 {t["truck"]} <strong>{escape(o["plate"])}</strong>'
+                       + (f' + {t["trailer"]} <strong>{escape(o["trailer"])}</strong>' if o["trailer"] else "") + '</div></li>'
+                       for o in transports) or f'<li class="muted">{t["history_none"]}</li>'
+        body = (f'<header><div><div class="brand">MalcomTrans</div><h1>{t["title"]}</h1></div><nav class="langs">{langs}</nav></header>' + tabs
+                + f'<section class="card"><h2>{t["history_title"]}</h2><p class="hint">{t["history_help"]}</p><ul class="history">{rows}</ul></section>')
+        return _page(lang, t["tab_history"], body)
     body = (
-        f'<header><div><div class="brand">MalcomTrans</div><h1>{t["title"]}</h1></div><nav class="langs">{langs}</nav></header>'
-        f'<p class="hello">{t["hello"]}, <strong>{escape(client["company"])}</strong>{"" if client["company"].rstrip().endswith(".") else "."} {t["intro"]}</p>'
+        f'<header><div><div class="brand">MalcomTrans</div><h1>{t["title"]}</h1></div><nav class="langs">{langs}</nav></header>' + tabs
+        + f'<p class="hello">{t["hello"]}, <strong>{escape(client["company"])}</strong>{"" if client["company"].rstrip().endswith(".") else "."} {t["intro"]}</p>'
         + (f'<p class="message ok">{escape(message)}</p>' if message else "")
         + (f'<p class="message warn">{escape(error)}</p>' if error else "")
         + ("" if routes else f'<p class="message info">{t["no_routes"]}</p>')
-        + usual_html
-        + f'<form method="post" action="{base}" class="card" id="request-form"><input type="hidden" name="l" value="{lang}">'
+        + ("" if editing else usual_html)
+        + f'<form method="post" action="{base}" class="card{" editing" if editing else ""}" id="request-form"><input type="hidden" name="l" value="{lang}">'
+        + (f'<input type="hidden" name="request_id" value="{escape(str(editing))}"><p class="message info">{t["editing"]} {escape(_day(form.get("load_date", "")))}.</p>' if editing else "")
         + f'<div class="add-route"><button type="button" class="add-route-btn" id="add-route">{t["add_route"]}</button>'
           f'<button type="button" class="back-routes" id="back-routes" hidden>{t["back_routes"]}</button>'
           f'<p class="hint">{t["add_route_help"]}</p></div>'
@@ -189,6 +212,7 @@ def render(token, client, routes, requests, lang, today, message="", error="", f
         + f'<label class="field"><span>{t["load_time"]}</span><input name="load_time" maxlength="40" placeholder="{t["load_time_ph"]}" value="{value("load_time")}"></label>'
         + '</div>'
         + f'<label class="field"><span>{t["notes"]}</span><textarea name="notes" rows="3" maxlength="1000">{value("notes")}</textarea></label>'
-        + f'<button class="send" type="submit">{t["send"]}</button></form>'
+        + f'<button class="send" type="submit">{t["save"] if editing else t["send"]}</button>'
+        + (f'<a class="cancel-edit" href="{base}?l={lang}">{t["cancel_edit"]}</a>' if editing else "") + '</form>'
         + f'<section class="card"><h2>{t["yours"]}</h2><ul class="history">{history}</ul></section>')
     return _page(lang, t["title"], body)

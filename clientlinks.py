@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta
 
 import deca
 from common import item
-from planner import UTC, ZONE, stamp
+from planner import UTC, ZONE, parse_time, stamp
 
 MAX_REQUESTS_PER_DAY = 40
 REQUEST_DAYS = 90
@@ -96,12 +96,46 @@ def client_routes(db, client_id):
     return result
 
 
+def editable_request(db, client, request_id):
+    """The client's own request, while the office has not confirmed it yet (the client may still change it)."""
+    try:
+        row = db.execute("SELECT * FROM load_requests WHERE id=? AND client_id=?", (int(request_id), client["id"])).fetchone()
+    except (TypeError, ValueError):
+        row = None
+    if row is None or row["status"] != "New" or json.loads(row["order_ids"] or "[]"):
+        raise ValueError("not_editable")
+    return _row(row)
+
+
+def request_form(db, client, request):
+    """A saved request as the form's fields (to edit it). A place the office saved that is not on the client's
+    list (a new route) comes back as typed fields."""
+    form = {"request_id": request["id"], "load_date": request["load_date"], "load_time": request["load_time"], "notes": request["notes"]}
+    routes = client_routes(db, client["id"])
+    listed = {r["from"]["id"] for r in routes} | {r["to"]["id"] for r in routes}
+    for side in ("from", "to"):
+        place_id = request[f"{side}_id"]
+        if place_id and place_id not in listed:
+            typed = request.get(f"{side}_place") or item(db, "locations", place_id)  # what the client typed, else the saved place
+            form[f"{side}_id"] = "other"
+            form.update({f"{side}_{key}": typed.get(key) or "" for key, _ in PLACE_FIELDS})
+        elif place_id:
+            form[f"{side}_id"] = str(place_id)
+        else:
+            form[f"{side}_id"] = "other"
+            place = request.get(f"{side}_place") or {}
+            form.update({f"{side}_{key}": place.get(key, "") for key, _ in PLACE_FIELDS} if place else {f"{side}_other": request[f"{side}_text"]})
+    return form
+
+
 def submit_request(db, client, form, now=None):
-    """Save a client's transport request from the form. Raises ValueError with a text key for the page."""
+    """Save a client's transport request from the form (a new one, or `request_id`: a change to one not confirmed
+    yet). Raises ValueError with a text key for the page."""
     now = (now or datetime.now(UTC)).astimezone(UTC).replace(microsecond=0)
+    editing = editable_request(db, client, form["request_id"]) if form.get("request_id") else None
     since = stamp(now - timedelta(days=1))
     sent = db.execute("SELECT count(*) AS n FROM load_requests WHERE client_id=? AND created_at>=?", (client["id"], since)).fetchone()
-    if sent["n"] >= MAX_REQUESTS_PER_DAY:
+    if not editing and sent["n"] >= MAX_REQUESTS_PER_DAY:
         raise ValueError("too_many")
     routes = client_routes(db, client["id"])
     places = {r["from"]["id"] for r in routes} | {r["to"]["id"] for r in routes}
@@ -139,6 +173,13 @@ def submit_request(db, client, form, now=None):
     if not 1 <= trucks <= 30:
         raise ValueError("trucks")
     lang = form.get("l") if form.get("l") in ("en", "fr") else "es"
+    if editing:
+        db.execute("UPDATE load_requests SET lang=?, tariff_id=?, from_id=?, to_id=?, from_text=?, to_text=?, from_place=?, to_place=?, "
+                   "load_date=?, load_time=?, notes=? WHERE id=?",
+                   (lang, route["tariff_id"] if route else None, from_id, to_id, from_text, to_text,
+                    json.dumps(from_place, ensure_ascii=False) if from_place else "", json.dumps(to_place, ensure_ascii=False) if to_place else "",
+                    day.isoformat(), _clean(form.get("load_time"), 40), _note(form.get("notes"), 1000), editing["id"]))
+        return editing["id"]
     db.execute("INSERT INTO load_requests (client_id, created_at, lang, tariff_id, from_id, to_id, from_text, to_text, "
                "from_place, to_place, load_date, load_time, unload_by, trucks, weight, material, reference, contact, notes) "
                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -176,6 +217,16 @@ def _row(row):
     for key in ("from_place", "to_place"):
         data[key] = json.loads(data.get(key) or "{}")
     return data
+
+
+def client_history(db, client_id, days=365):
+    """The client's transports with us (no prices): day, route, tractor + trailer, status. Newest first."""
+    since = stamp(datetime.now(UTC) - timedelta(days=days))
+    return [{key.lower(): row[key] for key in row.keys()} for row in db.execute(
+        "SELECT o.id, o.pickup_at, o.plate, o.trailer, o.status, f.company AS from_company, f.city AS from_city, "
+        "d.company AS to_company, d.city AS to_city FROM orders o JOIN locations f ON f.id=o.loading_id "
+        "JOIN locations d ON d.id=o.unloading_id WHERE o.client_id=? AND o.status!='Cancelled' AND o.pickup_at>=? "
+        "ORDER BY o.pickup_at DESC LIMIT 300", (client_id, since))]
 
 
 def client_requests(db, client_id, limit=12):
@@ -228,10 +279,45 @@ def request_place(db, data):
     return {"message": f'{place["company"]} saved and set on the request.'}
 
 
+def match_request(db, order_id, user=""):
+    """An order made by hand (not from the request card) for a client who asked for it: same client, loading,
+    unloading and day as an open request still missing trucks. It is linked, so the client sees the truck."""
+    order = item(db, "orders", order_id)
+    if not order.get("client_id"):
+        return None
+    day = parse_time(order["pickup_at"]).astimezone(ZONE).date().isoformat()
+    for row in db.execute("SELECT * FROM load_requests WHERE client_id=? AND from_id=? AND to_id=? AND load_date=? "
+                          "AND status IN ('New','Planned') ORDER BY created_at", (order["client_id"], order["loading_id"], order["unloading_id"], day)):
+        request = _row(row)
+        if order_id in request["order_ids"]:
+            return request["id"]
+        if len(_active_orders(db, request)) < request["trucks"]:
+            link_order(db, request["id"], order_id, user)
+            return request["id"]
+    return None
+
+
+def _active_orders(db, request):
+    ids = request["order_ids"]
+    return [row["id"] for row in db.execute(f"SELECT id FROM orders WHERE status!='Cancelled' AND id IN ({','.join('?' * len(ids))})", ids)] if ids else []
+
+
+def order_cancelled(db, order_id):
+    """A cancelled order no longer serves its request: it is taken off, and a confirmed request now missing a
+    truck goes back to new (the client sees "received", the office sees it to plan again)."""
+    for row in db.execute("SELECT * FROM load_requests WHERE order_ids LIKE ?", (f"%{int(order_id)}%",)).fetchall():
+        request = _row(row)
+        if order_id not in request["order_ids"]:
+            continue
+        orders = [i for i in request["order_ids"] if i != order_id]
+        status = "New" if request["status"] == "Planned" and len(_active_orders(db, {**request, "order_ids": orders})) < request["trucks"] else request["status"]
+        db.execute("UPDATE load_requests SET order_ids=?, status=? WHERE id=?", (json.dumps(orders), status, request["id"]))
+
+
 def link_order(db, request_id, order_id, user=""):
     """An order created from a request: linked to it; the request is planned once it has an order per truck."""
     request = _request(db, request_id)
     orders = [*request["order_ids"], order_id]
-    status = "Planned" if len(orders) >= request["trucks"] else request["status"]
+    status = "Planned" if len(_active_orders(db, {**request, "order_ids": orders})) >= request["trucks"] else request["status"]
     db.execute("UPDATE load_requests SET order_ids=?, status=?, handled_at=?, handled_by=? WHERE id=?",
                (json.dumps(orders), status, stamp(datetime.now(UTC)), user or "", request["id"]))

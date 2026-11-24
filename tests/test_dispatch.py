@@ -1271,13 +1271,33 @@ class DispatchTests(unittest.TestCase):
             place=app.save_master(db,"locations",{"company":"Nueva Planta","city":"Zaragoza","postal_code":"50001","country":"Spain"})
             app.request_place(db,{"id":new_route["id"],"side":"to","location_id":place})
             self.assertEqual(load_requests(db,parse_time("2030-01-07T10:00"))[0]["to_id"],place)
+            # The client changes a request not handled yet (same checks as a new one); not one already handled.
+            company=app.client_by_token(db,link["token"])
+            changed=app.request_form(db,company,app.editable_request(db,company,new_route["id"]))
+            self.assertEqual((changed["to_id"],changed["to_company"],changed["from_id"]),("other","Nueva Planta",str(self.a)))
+            with patch("clientlinks.datetime") as clock:
+                clock.now.return_value=parse_time("2030-01-07T09:00")
+                app.submit_request(db,company,{**changed,"notes":"Gate 3","load_date":"2030-01-09"})
+            edited=load_requests(db,parse_time("2030-01-07T10:00"))[0]
+            self.assertEqual((edited["id"],edited["notes"],edited["load_date"]),(new_route["id"],"Gate 3","2030-01-09"))
+            self.assertEqual(len(load_requests(db,parse_time("2030-01-07T10:00"))),2)
             # Orders created from the request are linked; with 2 trucks it is planned after the second order.
             first=app.create_order(db,{**self.payload,"request_id":known["id"]})
             app.link_order(db,known["id"],first)
             self.assertEqual(load_requests(db,parse_time("2030-01-07T10:00"))[1]["status"],"New")
-            app.link_order(db,known["id"],first+1)
+            # An order made by hand for the same client, route and day is linked too: the second truck → planned.
+            second=app.create_order(db,self.manual_payload(client_id=ferimet,pickup_at="2030-02-07T08:00",unloading_arrive_at="2030-02-08T15:00"))
+            db.execute("UPDATE load_requests SET load_date='2030-02-07' WHERE id=?",(known["id"],))
+            self.assertEqual(app.match_request(db,second),known["id"])
             self.assertEqual(load_requests(db,parse_time("2030-01-07T10:00"))[1]["status"],"Planned")
+            # Cancelled: taken off the request, which goes back to new while a truck is missing.
+            db.execute("UPDATE orders SET status='Cancelled' WHERE id=?",(second,))
+            app.order_cancelled(db,second)
+            again=load_requests(db,parse_time("2030-01-07T10:00"))[1]
+            self.assertEqual((again["status"],again["order_ids"]),("New",[first]))
             set_request_status(db,{"id":new_route["id"],"status":"Rejected","reason":"No trucks that day"})
+            with self.assertRaisesRegex(ValueError,"not_editable"):
+                app.editable_request(db,company,new_route["id"])
         # The client sees the assembly that loads (tractor + trailer) and the day once the order is linked.
         server=app.ThreadingHTTPServer(("127.0.0.1",0),app.Handler)
         server.database=self.database
@@ -1288,6 +1308,8 @@ class DispatchTests(unittest.TestCase):
                 page=response.read().decode()
             self.assertIn("Truck <strong>TEST-001</strong> + trailer <strong>TR-001</strong> · loads on 07/01/2030",page)
             self.assertIn("No trucks that day",page)
+            with urlopen(f"http://127.0.0.1:{server.server_port}/c/{link['token']}?l=en&tab=history") as response:
+                self.assertIn("Your transports with us",response.read().decode())
         finally:
             server.shutdown()
             server.server_close()

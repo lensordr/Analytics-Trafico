@@ -34,3 +34,12 @@ body.client{margin:0;background:#f2f5f2;color:#142b21;font-family:system-ui,"Seg
 .client .back-routes{border:0;background:none;color:#12694b;font:inherit;font-size:14px;font-weight:650;padding:8px 0 0;cursor:pointer}
 .client .new-place{border:1px solid #b9cfc3;border-radius:12px;background:#f7faf8;padding:12px 12px 0;margin:0 0 14px}
 .client .new-place legend{font-weight:750;font-size:14px;color:#12694b;padding:0 6px}
+.client .vehicle.pending{background:#fff6e3;color:#7a5208}
+.client .tabs{display:flex;gap:6px;margin:10px 0 4px;border-bottom:2px solid #d6e0d9}
+.client .tab{padding:9px 14px;font-weight:700;color:#3d5148;text-decoration:none;border-radius:10px 10px 0 0;margin-bottom:-2px;border:2px solid transparent}
+.client .tab.on{color:#12694b;border-color:#d6e0d9;border-bottom-color:#f2f5f2;background:#f2f5f2}
+.client .edit-request{display:inline-block;margin-top:6px;font-weight:700;color:#12694b;font-size:14px;text-decoration:none;border:1px solid #b9cfc3;border-radius:8px;padding:4px 10px}
+.client .locked{display:block;margin-top:4px;color:#5e7066}
+.client .cancel-edit{display:block;text-align:center;margin-top:10px;color:#5e7066;font-weight:650}
+.client form.editing{border:2px solid #12694b}
+.client .badge.in-transit{background:#e6effa;color:#1d4f91}.client .badge.completed{background:#e3f4ea;color:#0d5236}
