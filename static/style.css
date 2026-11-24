@@ -342,3 +342,4 @@ tr.soon .service-bar{color:#f59e0b}tr.overdue .service-bar{color:#d92d20}
 .usual-truck.own{border-color:#1e6b34}.usual-truck:hover{background:#eaf3de}.usual-truck.missing{cursor:default;opacity:.65}
 .req-route .btn.small{margin-top:6px}
 .clients-table .client-name{color:inherit;text-align:left;padding:0}.clients-table .client-name:hover{text-decoration:underline}
+.client-route-ref{display:block;margin-top:3px;font-size:11px;font-weight:650;color:#7a5208}
