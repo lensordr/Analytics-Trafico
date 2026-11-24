@@ -24,7 +24,7 @@ import driver
 import oauth
 import routing
 from auth import Auth
-from clientlinks import client_by_token, client_link, client_requests, client_routes, link_order, load_requests, revoke_client_link, set_request_status, submit_request
+from clientlinks import client_by_token, client_link, client_requests, client_routes, link_order, load_requests, request_place, revoke_client_link, set_request_status, submit_request
 from common import item, text
 from names import apply_name_fixes, name_fixes
 from market import import_witruck, key_clients, usual_trucks
@@ -579,6 +579,8 @@ class Handler(BaseHTTPRequestHandler):
                     result = revoke_client_link(db,data)
                 elif path == "/api/load-request":
                     result = set_request_status(db,data,self.auth.user(self.headers.get("Cookie")) or "")
+                elif path == "/api/request-place":
+                    result = request_place(db,data)
                 elif path == "/api/order-status":
                     order = item(db,"orders",data.get("id"))
                     status = data.get("status")

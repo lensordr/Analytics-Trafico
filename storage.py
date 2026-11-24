@@ -494,6 +494,11 @@ def initialize(target):
             status TEXT NOT NULL DEFAULT 'New', reason TEXT NOT NULL DEFAULT '', order_ids TEXT NOT NULL DEFAULT '[]',
             handled_at TEXT, handled_by TEXT NOT NULL DEFAULT '')""")
         db.execute("CREATE INDEX IF NOT EXISTS load_requests_client ON load_requests(client_id, created_at)")
+        # A new route typed by the client: company, address, postal code, town and country of each new place (JSON).
+        columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(load_requests)")}
+        for column in ("from_place", "to_place"):
+            if column not in columns:
+                db.execute(f"ALTER TABLE load_requests ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         # Maintenance (oil change every 60,000 km): km of the last change, the km read at the end of the month
         # (and the reading before it, for the km per month). The next change is the last one + service_every_km.
         columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(trucks)")}

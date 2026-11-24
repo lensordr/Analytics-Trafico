@@ -4,7 +4,10 @@
   const from=document.getElementById('from_id'),to=document.getElementById('to_id'),hint=document.getElementById('to-hint');
   if(!from||!to)return;
   const norm=s=>String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
-  function other(select){const box=document.querySelector('[data-other="'+select.id+'"]');if(!box)return;const on=select.value==='other';box.hidden=!on;box.querySelector('textarea').required=on;}
+  const add=document.getElementById('add-route'),back=document.getElementById('back-routes'),hasRoutes=from.options.length>2;
+  function other(select){const box=document.querySelector('[data-other="'+select.id+'"]');if(!box)return;const on=select.value==='other';box.hidden=!on;
+    for(const input of box.querySelectorAll('[data-need]'))input.required=on;
+    if(back)back.hidden=!hasRoutes||(from.value!=='other'&&to.value!=='other');}
   function allowed(option){const list=option.dataset.from;return !list||option.closest('select')!==to||!from.value||from.value==='other'||list.split(' ').includes(from.value);}
   function filter(){for(const option of to.options){if(!option.dataset.from)continue;const ok=allowed(option);option.hidden=!ok;option.disabled=!ok;}
     if(to.selectedOptions[0]&&to.selectedOptions[0].disabled)to.value='';hint.hidden=!from.value||from.value==='other';other(to);}
@@ -19,6 +22,10 @@
     input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();const first=list.querySelector('.match');if(first)first.click();}});}
   for(const b of document.querySelectorAll('.route-pick'))b.addEventListener('click',()=>{choose(from,b.dataset.from);choose(to,b.dataset.to);
     for(const x of document.querySelectorAll('.route-pick'))x.classList.toggle('on',x===b);document.getElementById('request-form').scrollIntoView({behavior:'smooth',block:'start'});});
+  if(add)add.addEventListener('click',()=>{for(const s of [from,to])choose(s,'other');for(const x of document.querySelectorAll('.route-pick'))x.classList.remove('on');
+    const first=document.querySelector('[data-other="from_id"] input');if(first)first.focus();});
+  if(back)back.addEventListener('click',()=>{for(const s of [from,to])choose(s,'');from.focus();});
+  if(!hasRoutes&&add)add.hidden=true;
   from.addEventListener('change',()=>{other(from);filter();});to.addEventListener('change',()=>other(to));
   other(from);other(to);filter();
 })();

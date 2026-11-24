@@ -28,3 +28,9 @@ body.client{margin:0;background:#f2f5f2;color:#142b21;font-family:system-ui,"Seg
 .client .usual h2{margin-bottom:4px}.client .usual .hint{margin:0 0 10px}
 .client .route-pick{display:block;width:100%;text-align:left;border:1px solid #d6e0d9;border-radius:10px;background:#f7faf8;padding:10px 12px;margin-bottom:8px;font:inherit;font-size:15px;color:#142b21;cursor:pointer}.client .route-pick span{margin:0 8px;color:#12694b;font-weight:700}.client .route-pick small{color:#5e7066}.client .route-pick.on{border-color:#12694b;background:#e3f4ea}
 .client .vehicle{margin-top:6px;background:#e3f4ea;color:#0d5236;border-radius:8px;padding:7px 10px;font-size:14px}
+.client .add-route{margin-bottom:14px}.client .add-route .hint{margin:6px 0 0}
+.client .add-route-btn{display:block;width:100%;border:2px dashed #12694b;border-radius:12px;background:#f2f9f5;color:#12694b;padding:12px;font:inherit;font-size:16px;font-weight:750;cursor:pointer}
+.client .add-route-btn:hover{background:#e3f4ea}
+.client .back-routes{border:0;background:none;color:#12694b;font:inherit;font-size:14px;font-weight:650;padding:8px 0 0;cursor:pointer}
+.client .new-place{border:1px solid #b9cfc3;border-radius:12px;background:#f7faf8;padding:12px 12px 0;margin:0 0 14px}
+.client .new-place legend{font-weight:750;font-size:14px;color:#12694b;padding:0 6px}

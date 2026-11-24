@@ -1207,6 +1207,10 @@ class DispatchTests(unittest.TestCase):
                 self.assertNotIn(hidden,page)
             with urlopen(url+"?l=en") as response:
                 self.assertIn("Transport request",response.read().decode())
+            self.assertIn('name="to_postal_code"',page)
+            with urlopen(url+"?l=fr") as response:
+                self.assertIn("Ajouter une nouvelle route",response.read().decode())
+            self.assertIn("Añadir ruta nueva",page)
             with self.assertRaises(HTTPError) as err:
                 urlopen(f"http://127.0.0.1:{server.server_port}/c/{'x'*24}")
             self.assertEqual(err.exception.code,404)
@@ -1220,7 +1224,12 @@ class DispatchTests(unittest.TestCase):
                 form.update(from_id=str(self.a),to_id=str(self.b),weight="26 t",reference="PO-77",trucks="2")
                 with urlopen(Request(url,data=app.urlencode(form).encode())) as response:
                     self.assertIn("Solicitud enviada",response.read().decode())
-                form.update(to_id="other",to_other="Nueva Planta, Calle 1, Zaragoza 50001",trucks="1")
+                # New route: a place not on the list, typed field by field (company, address, postal code, town).
+                form.update(to_id="other",to_company="Nueva Planta",to_address="Calle 1",to_postal_code="50001",to_city="",trucks="1")
+                with self.assertRaises(HTTPError) as err:
+                    urlopen(Request(url,data=app.urlencode(form).encode()))
+                self.assertIn("código postal y población",err.exception.read().decode())
+                form.update(to_city="Zaragoza")
                 urlopen(Request(url,data=app.urlencode(form).encode())).read()
         finally:
             server.shutdown()
@@ -1233,7 +1242,12 @@ class DispatchTests(unittest.TestCase):
             self.assertEqual((known["from_id"],known["to_id"],known["weight"],known["trucks"]),(self.a,self.b,"26 t",2))
             self.assertTrue(known["tariff_id"])
             self.assertIsNone(new_route["to_id"])
-            self.assertIn("Zaragoza",new_route["to_text"])
+            self.assertEqual(new_route["to_text"],"Nueva Planta · Calle 1 · 50001 Zaragoza · España")
+            self.assertEqual(new_route["to_place"]["postal_code"],"50001")
+            # The dispatcher saves the new place: the request uses it.
+            place=app.save_master(db,"locations",{"company":"Nueva Planta","city":"Zaragoza","postal_code":"50001","country":"Spain"})
+            app.request_place(db,{"id":new_route["id"],"side":"to","location_id":place})
+            self.assertEqual(load_requests(db,parse_time("2030-01-07T10:00"))[0]["to_id"],place)
             # Orders created from the request are linked; with 2 trucks it is planned after the second order.
             first=app.create_order(db,{**self.payload,"request_id":known["id"]})
             app.link_order(db,known["id"],first)

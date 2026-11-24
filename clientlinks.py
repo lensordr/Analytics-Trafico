@@ -115,9 +115,8 @@ def submit_request(db, client, form, now=None):
         raise ValueError("choose_place")
 
     from_id, to_id = choice("from_id"), choice("to_id")
-    from_text, to_text = _note(form.get("from_other"), 400), _note(form.get("to_other"), 400)
-    if (from_id is None and len(from_text) < 5) or (to_id is None and len(to_text) < 5):
-        raise ValueError("other_place")
+    from_place, from_text = new_place(form, "from") if from_id is None else ({}, "")
+    to_place, to_text = new_place(form, "to") if to_id is None else ({}, "")
     route = next((r for r in routes if r["from"]["id"] == from_id and r["to"]["id"] == to_id), None) if from_id and to_id else None
     try:
         day = date.fromisoformat(str(form.get("load_date", "")))
@@ -139,19 +138,43 @@ def submit_request(db, client, form, now=None):
         raise ValueError("trucks") from None
     if not 1 <= trucks <= 30:
         raise ValueError("trucks")
-    lang = "en" if form.get("l") == "en" else "es"
+    lang = form.get("l") if form.get("l") in ("en", "fr") else "es"
     db.execute("INSERT INTO load_requests (client_id, created_at, lang, tariff_id, from_id, to_id, from_text, to_text, "
-               "load_date, load_time, unload_by, trucks, weight, material, reference, contact, notes) "
-               "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-               (client["id"], stamp(now), lang, route["tariff_id"] if route else None, from_id, to_id,
-                "" if from_id else from_text, "" if to_id else to_text, day.isoformat(), _clean(form.get("load_time"), 40),
+               "from_place, to_place, load_date, load_time, unload_by, trucks, weight, material, reference, contact, notes) "
+               "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+               (client["id"], stamp(now), lang, route["tariff_id"] if route else None, from_id, to_id, from_text, to_text,
+                json.dumps(from_place, ensure_ascii=False) if from_place else "", json.dumps(to_place, ensure_ascii=False) if to_place else "",
+                day.isoformat(), _clean(form.get("load_time"), 40),
                 unload_by, trucks, _clean(form.get("weight"), 60) or DEFAULT_WEIGHT, _clean(form.get("material"), 120),
                 _clean(form.get("reference"), 80), _clean(form.get("contact"), 120), _note(form.get("notes"), 1000)))
+
+
+PLACE_FIELDS = (("company", 200), ("address", 200), ("postal_code", 12), ("city", 120), ("country", 60))
+
+
+def new_place(form, side):
+    """A loading or unloading place that is not on the client's list: company, address, postal code, town, country.
+    Returns ({fields}, "one line for the dispatcher"). An old page with the single address box still works."""
+    place = {key: _clean(form.get(f"{side}_{key}"), limit) for key, limit in PLACE_FIELDS}
+    if not any(place.values()):
+        text = _note(form.get(f"{side}_other"), 400)
+        if len(text) < 5:
+            raise ValueError("other_place")
+        return {}, text
+    if not all(place[key] for key in ("company", "address", "postal_code", "city")):
+        raise ValueError("other_place")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 -]{2,11}", place["postal_code"]):
+        raise ValueError("postal_code")
+    place["country"] = place["country"] or "España"
+    text = f'{place["company"]} · {place["address"]} · {place["postal_code"]} {place["city"]} · {place["country"]}'
+    return place, text
 
 
 def _row(row):
     data = {key.lower(): row[key] for key in row.keys()}
     data["order_ids"] = json.loads(data.get("order_ids") or "[]")
+    for key in ("from_place", "to_place"):
+        data[key] = json.loads(data.get(key) or "{}")
     return data
 
 
@@ -187,6 +210,22 @@ def set_request_status(db, data, user=""):
     db.execute("UPDATE load_requests SET status=?, reason=?, handled_at=?, handled_by=? WHERE id=?",
                (status, reason, stamp(datetime.now(UTC)) if status != "New" else None, user or "", request["id"]))
     return {"message": {"Rejected": "Request rejected.", "Planned": "Request marked as planned.", "New": "Request open again."}[status]}
+
+
+def request_place(db, data):
+    """Dispatcher: the new place of a request was saved under Saved locations: the request now uses it (and the
+    client's tariff for the route, if there is one)."""
+    request = _request(db, data.get("id"))
+    side = data.get("side")
+    if side not in ("from", "to"):
+        raise ValueError("Choose the loading or the unloading.")
+    place = item(db, "locations", data.get("location_id"))
+    ids = {"from": request["from_id"], "to": request["to_id"], side: place["id"]}
+    tariff = db.execute("SELECT id FROM tariffs WHERE client_id=? AND from_id=? AND to_id=? AND active=1 ORDER BY id LIMIT 1",
+                        (request["client_id"], ids["from"], ids["to"])).fetchone() if ids["from"] and ids["to"] else None
+    db.execute(f"UPDATE load_requests SET {side}_id=?, tariff_id=? WHERE id=?",
+               (place["id"], tariff["id"] if tariff else request["tariff_id"], request["id"]))
+    return {"message": f'{place["company"]} saved and set on the request.'}
 
 
 def link_order(db, request_id, order_id, user=""):
