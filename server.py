@@ -250,6 +250,9 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError as error:
                     return self.driver_get(token, error=str(error), lang=lang)
                 return self.redirect(f"/s/{token}?l={lang}&eta=1")
+            if any(photos.needs_docs(s) for s in stops):
+                # The document photo of the last loading/unloading comes first (the page shows only that step).
+                return self.redirect(f"/s/{token}?l={lang}#docs")
             if order["status"] == "Cancelled" or next_stop is None or str(next_stop["seq"]) != form.get("seq"):
                 # Double tap or an old page: nothing to confirm, just show the current state.
                 return self.redirect(f"/s/{token}?l={lang}")

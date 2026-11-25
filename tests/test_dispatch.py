@@ -1474,6 +1474,10 @@ class DispatchTests(unittest.TestCase):
             page = call("GET", f"/s/{token}?l=ro&ok=1")[2]
             self.assertIn("Poza la documentul de încărcare", page)
             self.assertNotIn("AM DESCĂRCAT", page)
+            # A direct post (old page, typed request) cannot confirm the unloading before the loading document.
+            self.assertEqual(call("POST", f"/s/{token}", b"seq=2&l=ro")[1]["Location"], f"/s/{token}?l=ro#docs")
+            with connect(self.database) as db:
+                self.assertEqual([s["status"] for s in app.order_stop_rows(db, order_id)], ["Done", "Planned"])
             self.assertEqual(call("POST", f"/s/{token}", b"action=docs&seq=1&mode=sent&l=ro")[1]["Location"], f"/s/{token}?l=ro#docs")  # no photo yet
             jpeg = "data:image/jpeg;base64," + base64.b64encode(b"\xff\xd8\xff\xe0" + b"x" * 500).decode()
             self.assertEqual(call("POST", f"/s/{token}/photo", json.dumps({"seq": 1, "image": "data:image/png;base64,AAAA"}).encode())[0], 400)
