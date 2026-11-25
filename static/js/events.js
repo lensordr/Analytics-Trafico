@@ -1,7 +1,7 @@
 'use strict';
 // Event handlers (click, submit, change, input), auto-refresh and start-up. Load last.
-// Click anywhere on a journey card (Daily planning, Fleet board) to open the journey details; links, fields and selected text keep working.
-function openCardJourney(event){const card=event.target.closest('.journey-row[data-order-id],.board-journey[data-order-id],.trailer-load[data-order-id],.today-row[data-order-id]');if(!card||event.target.closest('a,input,select,textarea,label,summary,details'))return;if(String(window.getSelection?.()||'').trim())return;orderDetail(card.dataset.orderId);}
+// Click anywhere on a journey card (Daily planning, Upcoming planning) to open the journey details; links, fields and selected text keep working.
+function openCardJourney(event){const card=event.target.closest('.journey-row[data-order-id],.trailer-load[data-order-id],.today-row[data-order-id]');if(!card||event.target.closest('a,input,select,textarea,label,summary,details'))return;if(String(window.getSelection?.()||'').trim())return;orderDetail(card.dataset.orderId);}
 document.addEventListener('click',async event=>{const nav=event.target.closest('[data-view]');if(nav){navigate(nav.dataset.view);return;}const button=event.target.closest('[data-action]');if(!button){openCardJourney(event);return;}const action=button.dataset.action,id=button.dataset.id;const form=button.closest('form');try{
   if(action==='close'){$('#modal').close();return;}
   if(action==='refresh-upcoming'){await refresh();return;}
@@ -45,7 +45,7 @@ document.addEventListener('click',async event=>{const nav=event.target.closest('
   if(action==='order-detail'){orderDetail(id);return;}
   if(action==='plan-select'){plannerSel=Number(id);for(const el of document.querySelectorAll('.pt-trip'))el.classList.toggle('sel',el.dataset.id===id);const side=$('.pt-side');if(side)side.innerHTML=plannerSide();return;}
   if(action==='plan-chip'){plannerChip=id;render();return;}
-  if(action==='plan-alerts'){const box=$('#pt-alerts');if(box)box.hidden=!box.hidden;return;}
+  if(action==='plan-alerts'||action==='plan-todo'){const box=$(action==='plan-todo'?'#pt-todo':'#pt-alerts');if(box)box.hidden=!box.hidden;return;}
   if(action==='plan-truck'){const t=state.trucks.find(x=>x.id===Number(id));openOrder({truck_id:t.id,driver_id:t.driver_id,trailer_id:t.trailer_id,loading_id:t.location_id||'',pickup_at:selectedDay+'T08:00'});return;}
   if(action==='open-deca'){openDeca(id);return;}
   if(action==='map-marker'){mapMarkerClick(button.dataset.marker);return;}
@@ -79,7 +79,6 @@ document.addEventListener('click',async event=>{const nav=event.target.closest('
   if(action==='client-link-renew'){if(!confirm('Make a new link? The old one stops working at once.'))return;await openClientLink(id,true);toast('New link ready. Send it to the client.');return;}
   if(action==='client-link-revoke'){if(!confirm('Stop this link? The client can no longer send requests until you make a new one.'))return;await api('/api/client-link-revoke',{client_id:Number(id)});$('#modal').close();await refresh();toast('Link stopped.');return;}
   if(action==='copy-client-link'){const input=$('#client-link-url');try{await navigator.clipboard.writeText(input.value);toast('Link copied.');}catch{input.select();toast('Select and copy the link.');}return;}
-  if(action==='today-kind'){todayKind=button.dataset.kind;render();return;}
   if(action==='geo-run'){runGeocoding().catch(error=>toast(error.message,true));return;}
   if(action==='geo-stop'){if(geoRun)geoRun.running=false;return;}
   if(action==='geo-accept'||action==='geo-accept-all'){const list=action==='geo-accept'?[geoRun.review[Number(button.dataset.index)]]:[...geoRun.review];button.disabled=true;for(const r of list){await saveCoordinates(r.p,r.m);geoRun.review.splice(geoRun.review.indexOf(r),1);geoRun.saved++;}await refresh();toast(`${list.length} ${list.length===1?'position':'positions'} saved.`);return;}
@@ -88,7 +87,6 @@ document.addEventListener('click',async event=>{const nav=event.target.closest('
   if(action==='assign-tractor'){const box=button.closest('.relay-edit'),seq=Number(button.dataset.seq);const result=await api('/api/assign-tractor',{order_id:Number(id),seq,truck_id:box.querySelector('[data-search-select^="relay_truck_"] [data-search-hidden]').value||null,driver_id:box.querySelector('[data-relay-driver]').value||null});await refresh();orderDetail(id);toast(result.message);return;}
   if(action==='copy-wa'){const text=form.elements.text.value;try{await navigator.clipboard.writeText(text);toast('Message copied.');}catch{form.elements.text.select();toast('Select all and copy (Ctrl+C).',true);}return;}
   if(action==='edit-order'){const o=state.orders.find(x=>x.id===Number(id)),stops=orderStops(o),last=stops[stops.length-1];openOrder({...o,clock:o.clock_input,timing:o.plan?.end_state?'rules':'manual',unloading_arrive_at:last.planned_at,route_mode:o.route_source==='Manual'?'manual':'here',material_id:stops[0]?.material_id||'',loading_weight_kg:stops[0]?.weight_kg??'',unloading_weight_kg:last.weight_kg??'',via:stops.slice(1,-1),distance_km:last.leg_km??o.distance_km,driving_hours:last.leg_hours??o.driving_hours});return;}
-  if(action==='board-new-order'){const truck=state.trucks.find(t=>t.id===Number(id));openOrder({truck_id:truck.id,driver_id:truck.driver_id,trailer_id:truck.trailer_id,pickup_at:truckFreeFrom(truck.id,selectedDay+'T08:00')});await carryOrderClock($('#order-form'));return;}
   if(action==='add-via'){if(button.dataset.kind==='Tractor change'&&form?.elements.timing&&form.elements.timing.value!=='manual'){form.elements.timing.value='manual';toast('Arrival times set to “I enter them”: each tractor has its own driver.');}$('#via-stops').insertAdjacentHTML('beforeend',viaRow({kind:button.dataset.kind}));syncTiming();$('#order-preview').innerHTML='';$('#via-stops').lastElementChild.querySelector('select').focus();return;}
   if(action==='remove-via'){button.closest('[data-via]').remove();$('#order-preview').innerHTML='';return;}
   if(action==='confirm-stop'||action==='undo-stop'){const done=action==='confirm-stop',o=state.orders.find(x=>x.id===Number(id)),stop=orderStops(o).find(s=>s.seq===Number(button.dataset.seq));if(!done&&!window.confirm(`Undo the confirmation of ${stopKindLabel(o,stop).toLowerCase()} in ${getLocation(stop.location_id)?.city}?`))return;const when=button.parentElement.querySelector('[data-stop-time]')?.value;if(done){const at=when?new Date(when).getTime():Date.now(),early=(Date.parse(stop.planned_at)-at)/3600000;if(early>6&&!window.confirm(`${stopKindLabel(o,stop)} in ${getLocation(stop.location_id)?.city} is planned for ${formatDate(stop.planned_at)}, about ${Math.round(early)} hours later than the confirmation time. Confirm it as done anyway?`))return;}button.disabled=true;const inDetail=$('#modal').open&&!!button.closest('#modal');const result=await api('/api/stop-status',{order_id:o.id,seq:stop.seq,done,...(done&&when?{done_at:when}:{})});await refresh();if(inDetail)orderDetail(o.id);toast(result.message+(result.status==='Completed'?` ${o.number} is completed; the truck is free from the confirmed time.`:'')+(result.warning?' '+result.warning:''),!!result.warning);return;}
@@ -173,7 +171,7 @@ $('#close-modal').addEventListener('click',()=>$('#modal').close());
   modal.addEventListener('click',event=>{if(downOutside&&outside(event)&&!modal._dirty)modal.close();downOutside=false;});}
 // Every minute: fetch the latest data so delivery alerts appear on time (not while a form is open or a field is in use).
 setInterval(async()=>{if(!state||document.hidden)return;if($('#modal').open||kmEditing||document.activeElement?.matches?.('input,select,textarea')){updateAlertCount();return;}
-  try{if(!await loadState()){updateAlertCount();return;}$('#nav-count').textContent=state.orders.filter(x=>x.status==='Planned'||x.status==='In transit').length;if(view==='board'||view==='planner')render();else{updateAlertCount();updateItvCount();}}catch(error){}},60000);
+  try{if(!await loadState()){updateAlertCount();return;}$('#nav-count').textContent=state.orders.filter(x=>x.status==='Planned'||x.status==='In transit').length;if(view==='planner')render();else{updateAlertCount();updateItvCount();}}catch(error){}},60000);
 // Installable app: opens from the home screen in its own window (the worker caches nothing).
 if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
 refresh().catch(error=>{$('#main').innerHTML=empty('Could not connect to the local server',esc(error.message));toast(error.message,true);});

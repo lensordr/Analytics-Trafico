@@ -24,7 +24,7 @@ import driver
 import oauth
 import routing
 from auth import Auth
-from clientlinks import client_by_token, client_history, client_link, client_requests, editable_request, request_form, client_routes, link_order, load_requests, match_request, order_cancelled, request_place, revoke_client_link, set_request_status, submit_request
+from clientlinks import client_by_token, client_history, client_photo, client_photo_zip, client_steps, client_link, client_requests, editable_request, request_form, client_routes, link_order, load_requests, match_request, order_cancelled, request_place, revoke_client_link, set_request_status, submit_request
 from common import item, text
 from names import apply_name_fixes, name_fixes
 from market import import_witruck, key_clients, usual_trucks
@@ -311,6 +311,7 @@ class Handler(BaseHTTPRequestHandler):
             places = {row["id"]: row for row in db.execute("SELECT id, company, city FROM locations")}
             history = client_requests(db, company["id"])
             transports = client_history(db, company["id"])
+            steps = client_steps(db, [row["id"] for row in transports])
             if query.get("edit") and form is None and not error:
                 try:
                     form = request_form(db, company, editable_request(db, company, query["edit"]))
@@ -329,12 +330,32 @@ class Handler(BaseHTTPRequestHandler):
                                    for o in (orders.get(i) for i in request["order_ids"]) if o and o["status"] != "Cancelled"]
         if query.get("ok") and not message and not error:
             message = client.TEXT[lang]["saved" if query.get("ok") == "2" else "sent"]
+        local = lambda value: parse_time(value).astimezone(ZONE).strftime("%d/%m %H:%M") if value else ""
         for row in transports:
             row["day"] = parse_time(row["pickup_at"]).astimezone(ZONE).date().isoformat()
+            row["steps"] = [{**s, "done": local(s["done_at"]) if s["status"] == "Done" else ""} for s in steps.get(row["id"], [])]
         tab = "history" if query.get("tab") == "history" else "new"
         today = datetime.now(UTC).astimezone(ZONE).date().isoformat()
         self.send_body(200 if not error else 400, client.render(token, company, routes, history, lang, today, message, error, form, tab, transports),
                        "text/html; charset=utf-8", {"X-Robots-Tag": "noindex"})
+
+    def client_file(self, token, kind, key):
+        """A document photo (/c/<token>/foto/<id>, ?dl=1 to save it) or all photos of an order (/c/<token>/fotos/<order id>)."""
+        with connect(self.server.database) as db:
+            company = client_by_token(db, token)
+            found = None if company is None else client_photo(db, company["id"], key) if kind == "foto" else client_photo_zip(db, company["id"], key)
+        if found is None:
+            return self.send_body(404, "<!doctype html><meta charset=utf-8><title>MalcomTrans</title><p>No disponible.</p>", "text/html; charset=utf-8")
+        filename, body = found
+        save = kind == "fotos" or dict(parse_qsl(urlsplit(self.path).query)).get("dl") == "1"
+        self.send_response(200)
+        self.send_header("Content-Type", "application/zip" if kind == "fotos" else "image/jpeg")
+        self.send_header("Content-Disposition", f'{"attachment" if save else "inline"}; filename="{filename}"')
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "private, no-store")
+        self.send_header("X-Robots-Tag", "noindex")
+        self.end_headers()
+        return self.wfile.write(body)
 
     def client_post(self, token):
         length = int(self.headers.get("Content-Length","0") or 0)
@@ -486,6 +507,10 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/s/"):
             return self.driver_get(path[3:])
         if path.startswith("/c/"):
+            token, _, rest = path[3:].partition("/")
+            kind, _, key = rest.partition("/")
+            if kind in ("foto", "fotos") and key:
+                return self.client_file(token, kind, key)
             return self.client_get(path[3:])
         if path in CONNECTOR_GET:
             return self.connector_get(path)

@@ -223,10 +223,62 @@ def client_history(db, client_id, days=365):
     """The client's transports with us (no prices): day, route, tractor + trailer, status. Newest first."""
     since = stamp(datetime.now(UTC) - timedelta(days=days))
     return [{key.lower(): row[key] for key in row.keys()} for row in db.execute(
-        "SELECT o.id, o.pickup_at, o.plate, o.trailer, o.status, f.company AS from_company, f.city AS from_city, "
+        "SELECT o.id, o.number, o.pickup_at, o.plate, o.trailer, o.status, f.company AS from_company, f.city AS from_city, "
         "d.company AS to_company, d.city AS to_city FROM orders o JOIN locations f ON f.id=o.loading_id "
         "JOIN locations d ON d.id=o.unloading_id WHERE o.client_id=? AND o.status!='Cancelled' AND o.pickup_at>=? "
         "ORDER BY o.pickup_at DESC LIMIT 300", (client_id, since))]
+
+
+def client_steps(db, order_ids):
+    """{order id: [loading / unloading stops with status, confirmation time and photos]} of the client's own orders."""
+    if not order_ids:
+        return {}
+    marks = ",".join("?" * len(order_ids))
+    photos = {}
+    for row in db.execute(f"SELECT id, order_id, seq, n, data IS NOT NULL AS stored FROM stop_photos WHERE order_id IN ({marks}) "
+                          "ORDER BY order_id, seq, n", order_ids):
+        photos.setdefault((row["order_id"], row["seq"]), []).append({"id": row["id"], "n": row["n"], "stored": bool(row["stored"])})
+    steps = {}
+    for row in db.execute(f"SELECT s.order_id, s.seq, s.kind, s.status, s.done_at, l.company, l.city FROM order_stops s "
+                          f"JOIN locations l ON l.id=s.location_id WHERE s.order_id IN ({marks}) AND s.kind IN ('Loading','Unloading') "
+                          "ORDER BY s.order_id, s.seq", order_ids):
+        steps.setdefault(row["order_id"], []).append({"seq": row["seq"], "kind": row["kind"], "status": row["status"],
+                                                      "done_at": row["done_at"], "company": row["company"], "city": row["city"],
+                                                      "photos": photos.get((row["order_id"], row["seq"]), [])})
+    return steps
+
+
+def client_photo(db, client_id, photo_id):
+    """(file name, JPEG) of one document photo, only if it belongs to an order of this client and is still online."""
+    try:
+        row = db.execute("SELECT p.data, p.kind, p.n, p.seq, o.number FROM stop_photos p JOIN orders o ON o.id=p.order_id "
+                         "WHERE p.id=? AND o.client_id=?", (int(photo_id), client_id)).fetchone()
+    except (TypeError, ValueError):
+        row = None
+    if row is None or row["data"] is None:
+        return None
+    side = {"Loading": "carga", "Unloading": "descarga"}.get(row["kind"], "doc")
+    return f"{row['number']}-{side}{row['seq']}-{row['n']}.jpg", bytes(row["data"])
+
+
+def client_photo_zip(db, client_id, order_id):
+    """(file name, ZIP) with every document photo still online of one order of this client."""
+    import io, zipfile
+    try:
+        order = db.execute("SELECT id, number FROM orders WHERE id=? AND client_id=?", (int(order_id), client_id)).fetchone()
+    except (TypeError, ValueError):
+        order = None
+    if order is None:
+        return None
+    rows = db.execute("SELECT id FROM stop_photos WHERE order_id=? AND data IS NOT NULL ORDER BY seq, n", (order["id"],)).fetchall()
+    if not rows:
+        return None
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as archive:
+        for row in rows:
+            name, data = client_photo(db, client_id, row["id"])
+            archive.writestr(name, data)
+    return f"{order['number']}-documentos.zip", buffer.getvalue()
 
 
 def client_requests(db, client_id, limit=12):

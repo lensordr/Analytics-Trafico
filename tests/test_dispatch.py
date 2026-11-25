@@ -1489,6 +1489,28 @@ class DispatchTests(unittest.TestCase):
             # Then the optional DeCA form is offered.
             self.assertEqual((status, headers["Location"]), (303, f"/s/{token}?l=ro&deca=1"))
             self.assertIn("Documente: 2 poze", call("GET", f"/s/{token}?l=ro")[2])
+            # The client sees on its history: loaded (with the time), on the way, and the document photos to save.
+            with connect(self.database) as db:
+                client_id = self.a
+                db.execute("UPDATE orders SET client_id=? WHERE id=?", (client_id, order_id))
+                ctoken = app.client_link(db, {"client_id": client_id})["token"]
+                other = next(r["id"] for r in db.execute("SELECT id FROM locations WHERE id!=?", (client_id,)))
+                db.execute("UPDATE locations SET client_token='otherClientToken12345' WHERE id=?", (other,))
+                photo_ids = [p["id"] for p in photos.photo_list(db) if p["order_id"] == order_id]
+            page = call("GET", f"/c/{ctoken}?l=en&tab=history")[2]
+            self.assertIn("On the way", page)
+            self.assertIn("✔ Loading", page)
+            self.assertIn("○ Unloading", page)
+            self.assertIn(f'/c/{ctoken}/foto/{photo_ids[0]}?dl=1', page)
+            self.assertIn(f'/c/{ctoken}/fotos/{order_id}', page)
+            status, headers, _ = call("GET", f"/c/{ctoken}/foto/{photo_ids[0]}?dl=1")
+            self.assertEqual((status, headers["Content-Type"]), (200, "image/jpeg"))
+            self.assertIn("attachment", headers["Content-Disposition"])
+            status, headers, _ = call("GET", f"/c/{ctoken}/fotos/{order_id}")
+            self.assertEqual((status, headers["Content-Type"]), (200, "application/zip"))
+            self.assertEqual(call("GET", f"/c/otherClientToken12345/foto/{photo_ids[0]}")[0], 404)  # not its order
+            self.assertEqual(call("GET", f"/c/otherClientToken12345/fotos/{order_id}")[0], 404)
+            self.assertEqual(call("GET", f"/c/{ctoken}/foto/abc")[0], 404)
             with connect(self.database) as db:
                 listed = [p for p in photos.photo_list(db) if p["order_id"] == order_id]
                 self.assertEqual([(p["seq"], p["n"], p["stored"]) for p in listed], [(1, 1, 1), (1, 2, 1)])

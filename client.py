@@ -22,7 +22,7 @@ TEXT = {
         "yours": "Tus últimas solicitudes", "none": "Todavía no has enviado ninguna solicitud.",
         "status": {"New": "Recibida", "Planned": "Confirmada", "Rejected": "No podemos"},
         "truck_pending": "Camión por asignar",
-        "tab_new": "Nueva solicitud", "tab_history": "Historial", "edit": "✎ Editar", "editing": "Estás cambiando tu solicitud del", "save": "Guardar cambios", "cancel_edit": "Cancelar", "saved": "Cambios guardados. La oficina ve la solicitud actualizada.", "locked": "Confirmada: para cambiarla, llámanos.", "history_title": "Tus transportes con nosotros", "history_help": "Último año. Para un transporte nuevo, usa «Nueva solicitud».", "history_none": "Todavía no hay transportes.", "order_status": {"Planned": "Planificado", "In transit": "En camino", "Completed": "Entregado"}, "trucks_short": "camión(es)", "new_route": "Ruta nueva", "truck": "Camión", "trailer": "remolque", "loads": "carga el",
+        "tab_new": "Nueva solicitud", "tab_history": "Historial", "edit": "✎ Editar", "editing": "Estás cambiando tu solicitud del", "save": "Guardar cambios", "cancel_edit": "Cancelar", "saved": "Cambios guardados. La oficina ve la solicitud actualizada.", "locked": "Confirmada: para cambiarla, llámanos.", "history_title": "Tus transportes con nosotros", "history_help": "Último año. Para un transporte nuevo, usa «Nueva solicitud».", "history_none": "Todavía no hay transportes.", "step_Loading": "Carga", "step_Unloading": "Descarga", "step_done": "confirmada", "step_wait": "pendiente", "docs": "Documentos", "docs_zip": "Descargar todo (.zip)", "docs_gone": "Ya no está en línea: pídela a la oficina.", "docs_help": "Pulsa una foto para verla, «⬇» para guardarla.", "order_status": {"Planned": "Planificado", "In transit": "En camino", "Completed": "Entregado"}, "trucks_short": "camión(es)", "new_route": "Ruta nueva", "truck": "Camión", "trailer": "remolque", "loads": "carga el",
         "errors": {"choose_place": "Elige el punto de carga y el de descarga de la lista.",
                    "other_place": "Ruta nueva: escribe empresa, dirección, código postal y población.",
                    "postal_code": "Ruta nueva: el código postal no es válido.",
@@ -52,7 +52,7 @@ TEXT = {
         "yours": "Your latest requests", "none": "You have not sent any request yet.",
         "status": {"New": "Received", "Planned": "Confirmed", "Rejected": "We cannot"},
         "truck_pending": "Truck to be assigned",
-        "tab_new": "New request", "tab_history": "History", "edit": "✎ Edit", "editing": "You are changing your request of", "save": "Save changes", "cancel_edit": "Cancel", "saved": "Changes saved. The office sees the updated request.", "locked": "Confirmed: to change it, call us.", "history_title": "Your transports with us", "history_help": "Last year. For a new transport, use “New request”.", "history_none": "No transports yet.", "order_status": {"Planned": "Planned", "In transit": "On the way", "Completed": "Delivered"}, "trucks_short": "truck(s)", "new_route": "New route", "truck": "Truck", "trailer": "trailer", "loads": "loads on",
+        "tab_new": "New request", "tab_history": "History", "edit": "✎ Edit", "editing": "You are changing your request of", "save": "Save changes", "cancel_edit": "Cancel", "saved": "Changes saved. The office sees the updated request.", "locked": "Confirmed: to change it, call us.", "history_title": "Your transports with us", "history_help": "Last year. For a new transport, use “New request”.", "history_none": "No transports yet.", "step_Loading": "Loading", "step_Unloading": "Unloading", "step_done": "confirmed", "step_wait": "pending", "docs": "Documents", "docs_zip": "Download all (.zip)", "docs_gone": "No longer online: ask the office.", "docs_help": "Tap a photo to view it, “⬇” to save it.", "order_status": {"Planned": "Planned", "In transit": "On the way", "Completed": "Delivered"}, "trucks_short": "truck(s)", "new_route": "New route", "truck": "Truck", "trailer": "trailer", "loads": "loads on",
         "errors": {"choose_place": "Choose the loading and the unloading point from the list.",
                    "other_place": "New route: type company, address, postal code and town.",
                    "postal_code": "New route: the postal code is not valid.",
@@ -82,7 +82,7 @@ TEXT = {
         "yours": "Vos dernières demandes", "none": "Vous n'avez encore envoyé aucune demande.",
         "status": {"New": "Reçue", "Planned": "Confirmée", "Rejected": "Impossible"},
         "truck_pending": "Camion à attribuer",
-        "tab_new": "Nouvelle demande", "tab_history": "Historique", "edit": "✎ Modifier", "editing": "Vous modifiez votre demande du", "save": "Enregistrer", "cancel_edit": "Annuler", "saved": "Modifications enregistrées. Le bureau voit la demande mise à jour.", "locked": "Confirmée : pour la modifier, appelez-nous.", "history_title": "Vos transports avec nous", "history_help": "Dernière année. Pour un nouveau transport, utilisez « Nouvelle demande ».", "history_none": "Pas encore de transports.", "order_status": {"Planned": "Planifié", "In transit": "En route", "Completed": "Livré"}, "trucks_short": "camion(s)", "new_route": "Nouvelle route", "truck": "Camion", "trailer": "remorque", "loads": "charge le",
+        "tab_new": "Nouvelle demande", "tab_history": "Historique", "edit": "✎ Modifier", "editing": "Vous modifiez votre demande du", "save": "Enregistrer", "cancel_edit": "Annuler", "saved": "Modifications enregistrées. Le bureau voit la demande mise à jour.", "locked": "Confirmée : pour la modifier, appelez-nous.", "history_title": "Vos transports avec nous", "history_help": "Dernière année. Pour un nouveau transport, utilisez « Nouvelle demande ».", "history_none": "Pas encore de transports.", "step_Loading": "Chargement", "step_Unloading": "Déchargement", "step_done": "confirmé", "step_wait": "en attente", "docs": "Documents", "docs_zip": "Tout télécharger (.zip)", "docs_gone": "Plus en ligne : demandez-la au bureau.", "docs_help": "Touchez une photo pour la voir, « ⬇ » pour l'enregistrer.", "order_status": {"Planned": "Planifié", "In transit": "En route", "Completed": "Livré"}, "trucks_short": "camion(s)", "new_route": "Nouvelle route", "truck": "Camion", "trailer": "remorque", "loads": "charge le",
         "errors": {"choose_place": "Choisissez le lieu de chargement et celui de déchargement dans la liste.",
                    "other_place": "Nouvelle route : indiquez société, adresse, code postal et ville.",
                    "postal_code": "Nouvelle route : le code postal n'est pas valide.",
@@ -182,15 +182,26 @@ def render(token, client, routes, requests, lang, today, message="", error="", f
     tabs = ('<nav class="tabs">' + "".join(f'<a class="tab{" on" if key == tab else ""}" href="{base}?l={lang}{"&tab=history" if key == "history" else ""}">{t["tab_" + key]}</a>'
                                            for key in ("new", "history")) + '</nav>')
     editing = form.get("request_id")
+    def step(order, s):
+        # One loading / unloading: done (with the local time) or still to do, and the document photos of that stop.
+        pics = "".join(f'<span class="doc"><a href="{base}/foto/{p["id"]}" target="_blank" rel="noopener"><img src="{base}/foto/{p["id"]}" alt="{t["docs"]} {p["n"]}" loading="lazy"></a>'
+                       f'<a class="save" href="{base}/foto/{p["id"]}?dl=1" download title="⬇">⬇</a></span>' if p["stored"]
+                       else f'<span class="doc gone">{t["docs_gone"]}</span>' for p in s["photos"])
+        return (f'<div class="step{" done" if s["done"] else ""}">{"✔" if s["done"] else "○"} {t["step_" + s["kind"]]} '
+                f'<small>{escape(s["company"])} ({escape(s["city"])}) · {t["step_done"] + " " + s["done"] if s["done"] else t["step_wait"]}</small>'
+                + (f'<div class="docs">{pics}</div>' if pics else "") + '</div>')
     if tab == "history":
         rows = "".join(f'<li><span class="badge {o["status"].lower().replace(" ", "-")}">{t["order_status"].get(o["status"], o["status"])}</span>'
                        f'<strong>{escape(_day(o["day"]))}</strong><br><small>{escape(o["from_company"])} ({escape(o["from_city"])}) → '
                        f'{escape(o["to_company"])} ({escape(o["to_city"])})</small>'
                        f'<div class="vehicle">🚛 {t["truck"]} <strong>{escape(o["plate"])}</strong>'
-                       + (f' + {t["trailer"]} <strong>{escape(o["trailer"])}</strong>' if o["trailer"] else "") + '</div></li>'
+                       + (f' + {t["trailer"]} <strong>{escape(o["trailer"])}</strong>' if o["trailer"] else "") + '</div>'
+                       + "".join(step(o, s) for s in o.get("steps", []))
+                       + (f'<a class="docs-zip" href="{base}/fotos/{o["id"]}" download>⬇ {t["docs_zip"]}</a>'
+                          if any(p["stored"] for s in o.get("steps", []) for p in s["photos"]) else "") + '</li>'
                        for o in transports) or f'<li class="muted">{t["history_none"]}</li>'
         body = (f'<header><div><div class="brand">MalcomTrans</div><h1>{t["title"]}</h1></div><nav class="langs">{langs}</nav></header>' + tabs
-                + f'<section class="card"><h2>{t["history_title"]}</h2><p class="hint">{t["history_help"]}</p><ul class="history">{rows}</ul></section>')
+                + f'<section class="card"><h2>{t["history_title"]}</h2><p class="hint">{t["history_help"]} {t["docs_help"]}</p><ul class="history">{rows}</ul></section>')
         return _page(lang, t["tab_history"], body)
     body = (
         f'<header><div><div class="brand">MalcomTrans</div><h1>{t["title"]}</h1></div><nav class="langs">{langs}</nav></header>' + tabs
