@@ -653,14 +653,54 @@ def move_order(db, data):
     if not minutes or abs(minutes) > 14 * 24 * 60:
         raise ValueError("Move the order by up to two weeks.")
     stops = order_stop_rows(db, order["id"])
+    # `end`: the card is made longer or shorter (its right edge); otherwise the whole trip moves.
+    stretch = data.get("end") in (True, 1, "1", "true")
     first = next((s for s in stops if s["status"] != "Done"), None)
     if first is None or order["status"] in ("Cancelled", "Completed"):
-        raise ValueError(f"{order['number']} is {order['status'].lower()}; its times can no longer change.")
+        raise ValueError(f"{order['number']}: the unloading is already confirmed; it can no longer change."
+                         if order["status"] not in ("Cancelled", "Completed") else
+                         f"{order['number']} is {order['status'].lower()}; its times can no longer change.")
+    if stretch:
+        return stretch_order(db, order, stops, minutes)
     when = parse_time(first["planned_at"]) + timedelta(minutes=minutes)
     result = update_stop_eta(db, {"order_id": order["id"], "seq": first["seq"], "planned_at": stamp(when)})
-    local = when.astimezone(ZONE)
-    what = "Loading" if first["kind"] == "Loading" and first["seq"] == 1 else first["kind"]
-    return {"message": f"{order['number']}: {what.lower()} now {local:%d.%m %H:%M}.", "warning": result["warning"]}
+    what = "loading" if first["kind"] == "Loading" and first["seq"] == 1 else first["kind"].lower()
+    return {"message": f"{order['number']}: {what} on {when.astimezone(ZONE):%d.%m}.", "warning": result["warning"]}
+
+
+def stretch_order(db, order, stops, minutes):
+    """The card made longer or shorter: the trip ends `minutes` later (or earlier) and every stop not yet confirmed
+    (loading, road, unloading) stretches with it, in proportion. Confirmed stops stay as they were."""
+    begin_write(db)
+    done = [s for s in stops if s["status"] == "Done"]
+    anchor = parse_time(done[-1]["done_at"] or done[-1]["planned_end_at"]) if done else parse_time(stops[0]["planned_at"])
+    end = parse_time(stops[-1]["planned_end_at"])
+    new_end = end + timedelta(minutes=minutes)
+    if (end - anchor).total_seconds() <= 0 or (new_end - anchor).total_seconds() < 15 * 60:
+        raise ValueError(f"{order['number']}: a trip lasts at least 15 minutes.")
+    factor = (new_end - anchor) / (end - anchor)
+    at = lambda value: stamp(anchor + (parse_time(value) - anchor) * factor)
+    for s in stops:
+        if s["status"] != "Done":
+            s["planned_at"], s["planned_end_at"] = at(s["planned_at"]), at(s["planned_end_at"])
+            s["handling_hours"] = round((parse_time(s["planned_end_at"]) - parse_time(s["planned_at"])).total_seconds() / 3600, 2)
+            db.execute("UPDATE order_stops SET planned_at=?, planned_end_at=?, handling_hours=? WHERE id=?",
+                       (s["planned_at"], s["planned_end_at"], s["handling_hours"], s["id"]))
+    first, last = stops[0], stops[-1]
+    plan = json.loads(order["plan"] or "{}")
+    plan.update(arrival_at=last["planned_at"], unloading_at=last["planned_at"], available_at=last["planned_end_at"],
+                eta_updated_at=stamp(datetime.now(UTC)))
+    plan["stops"] = [{"arrival_at": s["planned_at"], "start_at": s["planned_at"], "end_at": s["planned_end_at"]} for s in stops]
+    db.execute("UPDATE orders SET pickup_at=?, arrival_at=?, unloading_at=?, available_at=?, loading_hours=?, unloading_hours=?, "
+               "plan=? WHERE id=?", (first["planned_at"], last["planned_at"], last["planned_at"], last["planned_end_at"],
+                                     first["handling_hours"], last["handling_hours"], json.dumps(plan), order["id"]))
+    moved = {**order, "pickup_at": first["planned_at"], "available_at": last["planned_end_at"]}
+    clash = conflicts(db, order["truck_id"], order["driver_id"], order["trailer"], parse_time(first["planned_at"]),
+                      parse_time(last["planned_end_at"]), order["id"], trailer_id=order["trailer_id"],
+                      trailer_ids=[s["pick_trailer_id"] for s in stops if s["pick_trailer_id"]],
+                      segments=stored_segments(moved, stops))
+    return {"message": f"{order['number']}: {'longer' if minutes > 0 else 'shorter'}, delivery on {parse_time(last['planned_at']).astimezone(ZONE):%d.%m}.",
+            "warning": ("Now overlaps with " + ", ".join(clash) + ". Check the next order.") if clash else ""}
 
 
 def update_stop_eta(db, data):

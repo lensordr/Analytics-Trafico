@@ -30,7 +30,7 @@ from names import apply_name_fixes, name_fixes
 from market import import_witruck, key_clients, usual_trucks
 from driverlinks import driver_deca, driver_link, driver_order, eta_reports, link_opens, mark_opened, report_delay
 from itv import delete_itv, import_itv, save_itv
-from masters import archive_master, restore_master, save_km_list, save_master, service_done
+from masters import archive_master, restore_master, save_km_list, save_master, service_done, set_truck_order
 from materials import delete_material, save_material
 from tariffs import delete_tariff, save_tariff
 import photos
@@ -685,6 +685,8 @@ class Handler(BaseHTTPRequestHandler):
                     result = {"ok":True}
                 elif path == "/api/stop-status":
                     result = set_stop_status(db,data)
+                elif path == "/api/truck-order":
+                    result = set_truck_order(db,data)
                 elif path == "/api/order-move":
                     result = move_order(db,data)
                 elif path == "/api/stop-eta":

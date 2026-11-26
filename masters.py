@@ -171,6 +171,23 @@ def service_done(db, data):
     return {"message": f"Change of {truck['plate']} saved at {km:,} km. Next one at {values['service_due_km']:,} km.".replace(",", ".")}
 
 
+def set_truck_order(db, data):
+    """The order of the tractor rows on Daily planning, top to bottom (ids)."""
+    ids = data.get("ids")
+    if not isinstance(ids, list) or not ids or len(ids) > 500:
+        raise ValueError("Choose the order of the tractors.")
+    try:
+        ids = [int(value) for value in ids]
+    except (TypeError, ValueError):
+        raise ValueError("Choose the order of the tractors.") from None
+    known = {row["id"] for row in db.execute("SELECT id FROM trucks")}
+    if len(set(ids)) != len(ids) or not set(ids) <= known:
+        raise ValueError("A tractor in the list no longer exists. Refresh and try again.")
+    for position, truck_id in enumerate(ids, start=1):
+        db.execute("UPDATE trucks SET plan_order=? WHERE id=?", (position, truck_id))
+    return {"message": "Order of the tractors saved."}
+
+
 def save_master(db, kind, data):
     if kind == "drivers":
         document = text(data, "dni_nie", False, 30).upper()

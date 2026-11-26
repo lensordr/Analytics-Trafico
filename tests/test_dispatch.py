@@ -465,9 +465,17 @@ class DispatchTests(unittest.TestCase):
                 app.create_order(db,{**self.payload,"pickup_at":"2030-01-07T10:00"})
             # Drag: the whole order moves (loading and unloading), by minutes or by a day.
             result = app.move_order(db,{"order_id":second,"minutes":90})
-            self.assertIn("loading now 08.01 11:30",result["message"])
+            self.assertIn("loading on 08.01",result["message"])
             stops = app.order_stop_rows(db,second)
             self.assertEqual([s["planned_at"][:16] for s in stops],["2030-01-08T11:30","2030-01-08T19:30"])
+            # Pulling the right edge: the whole trip (loading, road, unloading) gets shorter or longer in proportion.
+            self.assertIn("shorter, delivery on 08.01",app.move_order(db,{"order_id":second,"minutes":-180,"end":True})["message"])
+            stops = app.order_stop_rows(db,second)
+            self.assertEqual([(s["planned_at"][11:16],s["planned_end_at"][11:16]) for s in stops],[("11:30","12:10"),("16:50","17:30")])
+            self.assertEqual(app.item(db,"orders",second)["available_at"][11:16],"17:30")
+            with self.assertRaisesRegex(ValueError,"at least 15 minutes"):
+                app.move_order(db,{"order_id":second,"minutes":-600,"end":True})
+            app.move_order(db,{"order_id":second,"minutes":180,"end":True})
             app.move_order(db,{"order_id":second,"minutes":1440})
             self.assertEqual(app.item(db,"orders",second)["pickup_at"][:16],"2030-01-09T11:30")
             self.assertEqual(app.order_overlaps(db,second),[])
@@ -482,6 +490,13 @@ class DispatchTests(unittest.TestCase):
             app.set_stop_status(db,{"order_id":first,"seq":2,"done_at":"2030-01-08T14:00"})
             with self.assertRaisesRegex(ValueError,"completed"):
                 app.move_order(db,{"order_id":first,"minutes":60})
+            # The tractor rows keep the order they were dragged into.
+            other = app.save_master(db,"trucks",{"plate":"AAA-000","operation":"Local"})
+            app.set_truck_order(db,{"ids":[self.truck,other]})
+            self.assertEqual([app.item(db,"trucks",t)["plan_order"] for t in (self.truck,other)],[1,2])
+            for bad in ({"ids":[]},{"ids":[self.truck,self.truck]},{"ids":[99999]},{"ids":"x"}):
+                with self.assertRaises(ValueError):
+                    app.set_truck_order(db,bad)
 
     def test_driver_reports_delay_from_link(self):
         import driver

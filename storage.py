@@ -523,7 +523,8 @@ def initialize(target):
         for column, kind in (("service_due_km", "REAL"), ("odometer_km", "REAL"), ("odometer_on", "TEXT"),
                              ("monthly_km", "REAL"), ("service_every_km", "REAL NOT NULL DEFAULT 60000"),
                              ("last_service_km", "REAL"), ("prev_odometer_km", "REAL"), ("prev_odometer_on", "TEXT"),
-                             ("own_fleet", "INTEGER NOT NULL DEFAULT 0")):  # 1 = Malcom's own tractor: on the Maintenance page
+                             ("own_fleet", "INTEGER NOT NULL DEFAULT 0"),  # 1 = Malcom's own tractor: on the Maintenance page
+                             ("plan_order", "INTEGER")):  # the row of the tractor on Daily planning (set by dragging)
             if column not in columns:
                 db.execute(f"ALTER TABLE trucks ADD COLUMN {column} {kind}")
                 if column == "last_service_km":  # the first version saved the next change: the last one is 60,000 km before

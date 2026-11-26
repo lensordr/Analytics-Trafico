@@ -24,7 +24,7 @@ function plannerRows(){const rows=new Map();
     r.state=r.idle?'idle':r.trips.some(t=>t.state==='late')?'late':r.trips.some(t=>t.state==='go')?'go':r.trips.every(t=>t.state==='done')?'done':'plan';
     // Free after the last trip of the day, while there is still working time (until 19:00) and it is not late.
     r.free=last&&!last.endsAfter&&last.state!=='late'&&last.b<19*60?last:null;return r;})
-    .sort((a,b)=>a.truck.plate.localeCompare(b.truck.plate));}
+    .sort((a,b)=>(a.truck.plan_order??1e9)-(b.truck.plan_order??1e9)||a.truck.plate.localeCompare(b.truck.plate));}
 const ptHHMM=m=>`${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
 function plannerView(){const rows=plannerRows(),isFree=r=>r.free||r.idle,count=k=>rows.filter(r=>k==='free'?isFree(r):r.state===k).length,shown=rows.filter(r=>plannerChip==='all'||(plannerChip==='free'?isFree(r):r.state===plannerChip));
   const all=rows.flatMap(r=>r.trips);if(!all.some(t=>t.o.id===plannerSel))plannerSel=(all.find(t=>t.state==='late')||all.find(t=>t.state==='go')||all[0])?.o.id??null;
@@ -33,8 +33,8 @@ function plannerView(){const rows=plannerRows(),isFree=r=>r.free||r.idle,count=k
   const hours=[];for(let h=7;h<=19;h+=2)hours.push(`<span class="pt-hour" data-min="${h*60}">${String(h).padStart(2,'0')}:00</span>`);
   const nowMark=today?`<i class="pt-now" data-min="${ptMinute(Date.now())}" title="Now"></i>`:'';
   const orders=filteredOrders(),loading=dayStops(orders,'Loading'),unloading=dayStops(orders,'Unloading'),swaps=dayStops(orders,'Trailer swap');
-  const tripButton=t=>`<button class="pt-trip ${t.state} ${t.o.id===plannerSel?'sel':''} ${t.startsBefore?'cut-l':''} ${t.endsAfter?'cut-r':''}" data-action="plan-select" data-id="${t.o.id}" data-a="${t.a}" data-b="${t.b}" data-lane="${t.lane}" ${ptMovable(t.o)?'data-drag="1"':''} title="${esc(`${t.o.number} · ${t.from?.city||'?'} → ${t.to?.city||'?'} · ${formatDate(t.p.start)} – ${formatDate(t.p.end)}${ptMovable(t.o)?' · drag left/right to move':''}`)}">${t.startsBefore?'‹ ':''}${esc(t.from?.city||'?')} → ${esc(t.to?.city||'?')}${t.endsAfter?' ›':''}</button>`;
-  const row=r=>`<div class="pt-row ${r.state}"><div class="pt-who"><strong>${esc(r.truck.plate)}</strong><small>${esc(state.drivers.find(d=>d.id===r.truck.driver_id)?.name||r.trips[0]?.o.driver_name||'')}</small></div><div class="pt-track" data-action="plan-slot" data-truck="${r.truck.id}" data-lanes="${r.lanes}" title="Click a time to plan a load for ${esc(r.truck.plate)}">${nowMark}${r.trips.map(tripButton).join('')}${r.free?`<button class="pt-free" data-action="reload-order" data-id="${r.free.o.id}" data-a="${r.free.b}" data-b="${PT_TO}" data-lane="0" title="Plan the next load for ${esc(r.truck.plate)}">＋ free ${ptHHMM(r.free.b)} · ${esc(r.free.to?.city||'')}</button>`:''}</div></div>`;
+  const tripButton=t=>`<button class="pt-trip ${t.state} ${t.o.id===plannerSel?'sel':''} ${t.startsBefore?'cut-l':''} ${t.endsAfter?'cut-r':''}" data-action="plan-select" data-id="${t.o.id}" data-a="${t.a}" data-b="${t.b}" data-lane="${t.lane}" ${ptMovable(t.o)?'data-drag="1"':''} title="${esc(`${t.o.number} · ${t.from?.city||'?'} → ${t.to?.city||'?'}${ptMovable(t.o)?' · drag to move · pull the right edge to make it longer or shorter':''}`)}">${t.startsBefore?'‹ ':''}${esc(t.from?.city||'?')} → ${esc(t.to?.city||'?')}${t.endsAfter?' ›':''}${ptStretchable(t)?'<span class="pt-grip" data-grip aria-hidden="true"></span>':''}</button>`;
+  const row=r=>`<div class="pt-row ${r.state}" data-truck-row="${r.truck.id}"><div class="pt-who" data-row-grip title="Drag up or down to change the order"><strong>${esc(r.truck.plate)}</strong><small>${esc(state.drivers.find(d=>d.id===r.truck.driver_id)?.name||r.trips[0]?.o.driver_name||'')}</small></div><div class="pt-track" data-action="plan-slot" data-truck="${r.truck.id}" data-lanes="${r.lanes}" title="Click to plan a load for ${esc(r.truck.plate)}">${nowMark}${r.trips.map(tripButton).join('')}${r.free?`<button class="pt-free" data-action="reload-order" data-id="${r.free.o.id}" data-a="${r.free.b}" data-b="${PT_TO}" data-lane="0" title="Plan the next load for ${esc(r.truck.plate)}">＋ free ${ptHHMM(r.free.b)} · ${esc(r.free.to?.city||'')}</button>`:''}</div></div>`;
   return `<div class="pt-bar"><button class="btn small" data-action="prev-day" aria-label="Previous day">‹</button><input type="date" id="planning-date" value="${selectedDay}" aria-label="Planning day"><button class="btn small" data-action="next-day" aria-label="Next day">›</button><button class="btn small ${today?'':'primary'}" data-action="today">Today</button>
   <h1 class="pt-title">${formatDay(selectedDay,true)}${today?' <small>today</small>':''}</h1><span class="pt-spacer"></span>${alerts.length?`<button class="pt-alert ${overdue?'overdue':''}" data-action="plan-alerts">${overdue?'⚠':'⏱'} ${alerts.length} to follow up</button>`:''}${todoButton()}<button class="btn primary" data-action="new-order">＋ New order</button></div>
   <div id="pt-todo" hidden>${todoPanel()}${itvPanel()}</div><div id="pt-alerts" hidden>${alertsPanel()}</div>
@@ -44,7 +44,7 @@ function plannerView(){const rows=plannerRows(),isFree=r=>r.free||r.idle,count=k
   <div class="pt-row pt-axis"><span></span><div class="pt-track">${hours.join('')}</div></div>
   ${shown.map(row).join('')||`<div class="pt-empty">${empty(rows.length?'No tractor in this filter':'No trips on this day',rows.length?'Choose another filter above.':'Add a loading order, or pick another day.','new-order','New order')}</div>`}
   </div></div>
-  <div class="pt-legend"><span class="done">done</span><span class="go">on the road</span><span class="plan">planned</span><span class="late">late</span><span class="free">free · click to plan</span><span class="tip">Click an empty time on a row for a new load · drag a card left/right to move it</span></div></section>
+  <div class="pt-legend"><span class="done">done</span><span class="go">on the road</span><span class="plan">planned</span><span class="late">late</span><span class="free">free · click to plan</span><span class="tip">Click an empty place on a row for a new load · drag a card to move it, pull its right edge to change its length · drag a tractor up or down</span></div></section>
   <aside class="panel pt-side">${plannerSide()}</aside></div>
   <details class="panel pt-lists"><summary>Loading and unloading lists · ${loading.length} loadings · ${unloading.length} unloadings${swaps.length?` · ${swaps.length} swaps`:''} · more filters</summary>
   <div class="filters">${[['loading','Loading place'],['unloading','Unloading place']].map(([k,l])=>`<div class="filter wide"><label for="filter-${k}">${l}</label><input id="filter-${k}" data-filter="${k}" data-suggest="places" autocomplete="off" placeholder="City, company or postcode" value="${esc(filters[k])}"></div>`).join('')}<div class="filter"><label for="filter-operation">Operation</label><select id="filter-operation" data-filter="operation"><option value="">All operations</option>${['International','National','Local'].map(v=>`<option ${filters.operation===v?'selected':''}>${v}</option>`).join('')}</select></div><div class="filter"><label for="filter-status">Order status</label><select id="filter-status" data-filter="status"><option value="">All active</option>${['Planned','In transit','Completed','Cancelled'].map(v=>`<option ${filters.status===v?'selected':''}>${v}</option>`).join('')}</select></div><button class="btn small" data-action="clear-filters">Reset</button></div>
@@ -61,6 +61,8 @@ function plannerSide(){const o=state.orders.find(x=>x.id===plannerSel);if(!o)ret
   ${o.status!=='Cancelled'?`<button class="btn" data-action="reload-order" data-id="${o.id}">＋ Next load after this</button>`:''}
   ${ptMovable(o)?`<div class="pt-move"><button class="btn small" data-action="move-order" data-id="${o.id}" data-minutes="-1440">◀ 1 day earlier</button><button class="btn small" data-action="move-order" data-id="${o.id}" data-minutes="1440">1 day later ▶</button></div>`:''}</div>`;}
 // A trip can be moved while it has stops still to confirm.
+// The card can be made longer or shorter while its final unloading is not confirmed (and it ends on this day).
+const ptStretchable=t=>ptMovable(t.o)&&!t.endsAfter&&orderStops(t.o).at(-1)?.status!=='Done';
 const ptMovable=o=>!['Cancelled','Completed'].includes(o.status)&&orderStops(o).some(s=>s.status!=='Done');
 // Inline styles are blocked by the page's security policy, so the bars are placed here from their minutes.
 function placeTimeline(){const span=PT_TO-PT_FROM;for(const el of document.querySelectorAll('.pt-track [data-a]')){const a=Number(el.dataset.a),b=Math.min(PT_TO,Math.max(Number(el.dataset.b),a+20));el.style.left=((Math.min(a,PT_TO-20)-PT_FROM)/span*100)+'%';el.style.width=((b-Math.min(a,PT_TO-20))/span*100)+'%';}
@@ -76,18 +78,33 @@ function planSlot(track,x){const t=state.trucks.find(v=>v.id===Number(track.data
 // The time under the mouse on an empty part of a row.
 document.addEventListener('mousemove',event=>{const track=event.target.closest?.('.pt-track[data-truck]');for(const g of document.querySelectorAll('.pt-ghost'))if(g.parentElement!==track||event.target!==track)g.remove();
   if(!track||event.target!==track||ptDrag)return;let g=track.querySelector('.pt-ghost');if(!g){g=document.createElement('span');g.className='pt-ghost';track.appendChild(g);}
-  const m=ptMinuteAt(track,event.clientX);g.textContent='＋ '+ptHHMM(m);g.style.left=((m-PT_FROM)/(PT_TO-PT_FROM)*100)+'%';});
+  const m=ptMinuteAt(track,event.clientX);g.textContent='＋';g.style.left=((m-PT_FROM)/(PT_TO-PT_FROM)*100)+'%';});
 // Drag a card left/right: on release the stops not yet confirmed move by that time (snapped to 15 min).
 document.addEventListener('pointerdown',event=>{const el=event.target.closest?.('.pt-trip[data-drag]');if(!el||event.button!==0)return;const track=el.parentElement;
-  ptDrag={el,track,x:event.clientX,id:Number(el.dataset.id),width:track.getBoundingClientRect().width,minutes:0,a:Number(el.dataset.a)};el.setPointerCapture(event.pointerId);});
+  ptDrag={el,track,x:event.clientX,id:Number(el.dataset.id),width:track.getBoundingClientRect().width,minutes:0,a:Number(el.dataset.a),b:Number(el.dataset.b),
+    end:!!event.target.closest('[data-grip]'),w0:el.getBoundingClientRect().width};el.setPointerCapture(event.pointerId);});
 document.addEventListener('pointermove',event=>{if(!ptDrag)return;const dx=event.clientX-ptDrag.x;if(Math.abs(dx)<5&&!ptDrag.moving)return;ptDrag.moving=true;
-  // The new start lands on a quarter hour (10:00, 10:15…).
-  ptDrag.minutes=Math.round((ptDrag.a+dx/ptDrag.width*(PT_TO-PT_FROM))/PT_SNAP)*PT_SNAP-ptDrag.a;const shown=ptDrag.minutes/(PT_TO-PT_FROM)*ptDrag.width;
-  ptDrag.el.classList.add('dragging');ptDrag.el.style.transform=`translateX(${shown}px)`;ptDrag.el.dataset.when=(ptDrag.minutes>0?'+':'−')+ptHHMM(Math.abs(ptDrag.minutes))+' → '+ptHHMM(Math.max(0,ptDrag.a+ptDrag.minutes));});
+  // The new start (or end, when stretching) lands on a quarter hour; a card stays at least 15 minutes long.
+  const span=PT_TO-PT_FROM,edge=ptDrag.end?ptDrag.b:ptDrag.a;let target=Math.round((edge+dx/ptDrag.width*span)/PT_SNAP)*PT_SNAP;
+  if(ptDrag.end)target=Math.min(PT_TO,Math.max(ptDrag.a+PT_SNAP,target));ptDrag.minutes=target-edge;const shown=ptDrag.minutes/span*ptDrag.width;
+  ptDrag.el.classList.add('dragging');if(ptDrag.end)ptDrag.el.style.width=Math.max(12,ptDrag.w0+shown)+'px';else ptDrag.el.style.transform=`translateX(${shown}px)`;});
 document.addEventListener('pointerup',async()=>{const drag=ptDrag;ptDrag=null;if(!drag?.moving)return;ptJustDragged=true;setTimeout(()=>{ptJustDragged=false;},300);
-  if(!drag.minutes){drag.el.classList.remove('dragging');drag.el.style.transform='';return;}
-  try{const result=await api('/api/order-move',{order_id:drag.id,minutes:drag.minutes});plannerSel=drag.id;await refresh();toast(result.message+(result.warning?' '+result.warning:''),!!result.warning);}
-  catch(error){drag.el.classList.remove('dragging');drag.el.style.transform='';toast(error.message,true);}});
+  if(!drag.minutes){drag.el.classList.remove('dragging');drag.el.style.transform='';placeTimeline();return;}
+  try{const result=await api('/api/order-move',{order_id:drag.id,minutes:drag.minutes,end:drag.end});plannerSel=drag.id;await refresh();toast(result.message+(result.warning?' '+result.warning:''),!!result.warning);}
+  catch(error){drag.el.classList.remove('dragging');drag.el.style.transform='';placeTimeline();toast(error.message,true);}});
+// Drag a tractor (its name) up or down: the rows keep that order, for everyone.
+let ptRowDrag=null;
+document.addEventListener('pointerdown',event=>{const grip=event.target.closest?.('[data-row-grip]');if(!grip||event.button!==0)return;const row=grip.closest('[data-truck-row]');
+  ptRowDrag={row,y:event.clientY,moved:false};row.classList.add('row-drag');grip.setPointerCapture(event.pointerId);event.preventDefault();});
+document.addEventListener('pointermove',event=>{if(!ptRowDrag)return;if(Math.abs(event.clientY-ptRowDrag.y)<4&&!ptRowDrag.moved)return;ptRowDrag.moved=true;
+  const rows=[...document.querySelectorAll('[data-truck-row]')].filter(r=>r!==ptRowDrag.row);
+  const after=rows.find(r=>{const box=r.getBoundingClientRect();return event.clientY<box.top+box.height/2;});
+  if(after)after.before(ptRowDrag.row);else rows.at(-1)?.after(ptRowDrag.row);});
+document.addEventListener('pointerup',async()=>{const drag=ptRowDrag;ptRowDrag=null;if(!drag)return;drag.row.classList.remove('row-drag');if(!drag.moved)return;
+  // The rows shown now (perhaps filtered) take their new order; the hidden ones keep their places around them.
+  const shown=[...document.querySelectorAll('[data-truck-row]')].map(r=>Number(r.dataset.truckRow)),all=plannerRows().map(r=>r.truck.id),set=new Set(shown);let i=0;
+  const ids=all.map(id=>set.has(id)?shown[i++]:id);
+  try{await api('/api/truck-order',{ids});await refresh();}catch(error){toast(error.message,true);await refresh();}});
 document.addEventListener('pointercancel',()=>{if(ptDrag){ptDrag.el.classList.remove('dragging');ptDrag.el.style.transform='';ptDrag=null;}});
 // The click that ends a drag does not also select the card.
 document.addEventListener('click',event=>{if(ptJustDragged&&event.target.closest?.('.pt-trip')){event.stopImmediatePropagation();event.preventDefault();ptJustDragged=false;}},true);
