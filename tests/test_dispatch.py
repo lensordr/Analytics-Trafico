@@ -453,6 +453,36 @@ class DispatchTests(unittest.TestCase):
         payload.update(extra)
         return payload
 
+    def test_notebook_planning_overlap_and_move(self):
+        with connect(self.database) as db:
+            first = app.create_order(db,self.manual_payload())  # loads Mon 08:00, unloads Tue 15:00
+            # Next load planned before the unloading (freestyle by day): saved, with the overlap shown.
+            second = app.create_order(db,self.manual_payload(loading_id=self.b,unloading_id=self.a,pickup_at="2030-01-08T10:00",
+                                                             unloading_arrive_at="2030-01-08T18:00"))
+            self.assertEqual(app.order_overlaps(db,second),[app.item(db,"orders",first)["number"]])
+            # Driving-rules orders stay one after the other.
+            with self.assertRaisesRegex(ValueError,"already assigned"):
+                app.create_order(db,{**self.payload,"pickup_at":"2030-01-07T10:00"})
+            # Drag: the whole order moves (loading and unloading), by minutes or by a day.
+            result = app.move_order(db,{"order_id":second,"minutes":90})
+            self.assertIn("loading now 08.01 11:30",result["message"])
+            stops = app.order_stop_rows(db,second)
+            self.assertEqual([s["planned_at"][:16] for s in stops],["2030-01-08T11:30","2030-01-08T19:30"])
+            app.move_order(db,{"order_id":second,"minutes":1440})
+            self.assertEqual(app.item(db,"orders",second)["pickup_at"][:16],"2030-01-09T11:30")
+            self.assertEqual(app.order_overlaps(db,second),[])
+            # Once loaded, only the stops still to confirm move.
+            app.set_stop_status(db,{"order_id":first,"seq":1,"done_at":"2030-01-07T08:30"})
+            app.move_order(db,{"order_id":first,"minutes":-60})
+            stops = app.order_stop_rows(db,first)
+            self.assertEqual((stops[0]["status"],stops[1]["planned_at"][:16]),("Done","2030-01-08T14:00"))
+            for bad in ({"order_id":first,"minutes":0},{"order_id":first,"minutes":"x"},{"order_id":first,"minutes":20161}):
+                with self.assertRaises(ValueError):
+                    app.move_order(db,bad)
+            app.set_stop_status(db,{"order_id":first,"seq":2,"done_at":"2030-01-08T14:00"})
+            with self.assertRaisesRegex(ValueError,"completed"):
+                app.move_order(db,{"order_id":first,"minutes":60})
+
     def test_driver_reports_delay_from_link(self):
         import driver
         from driverlinks import driver_order, eta_reports, report_delay
@@ -546,8 +576,9 @@ class DispatchTests(unittest.TestCase):
                                                          unloading_arrive_at="2030-01-09T12:00")))
             self.assertTrue(second)
         with connect(self.database) as db:
-            with self.assertRaisesRegex(ValueError,"already assigned"):
-                app.create_order(db,del_hours(form(pickup_at="2030-01-08T14:00",unloading_arrive_at="2030-01-08T16:30")))
+            # Overlapping the first delivery: allowed with manual times, shown as an overlap.
+            third = app.create_order(db,del_hours(form(pickup_at="2030-01-08T14:00",unloading_arrive_at="2030-01-08T16:30")))
+            self.assertIn(app.item(db,"orders",first)["number"],app.order_overlaps(db,third))
 
     def test_swap_undo_without_starting_trailer_and_trailer_moves_between_tractors(self):
         with connect(self.database) as db:
@@ -587,10 +618,11 @@ class DispatchTests(unittest.TestCase):
             # No time limit from the first order: the dispatcher decides when the other tractor takes it.
             app.create_order(db,relay("2030-01-07T12:00"))
         with connect(self.database) as db:
-            # The trailer picked up at the swap stays busy with the first tractor until it is free.
-            with self.assertRaisesRegex(ValueError,"already assigned"):
-                app.create_order(db,{**relay("2030-01-08T09:00"),"trailer_id":app.find_by_plate(db,"trailers","TR-EMPTY")["id"],
-                                     "unloading_arrive_at":"2030-01-08T12:00"})
+            # The trailer picked up at the swap stays busy with the first tractor until it is free: with manual times
+            # the office may still plan it (freestyle), and sees the overlap.
+            again = app.create_order(db,{**relay("2030-01-08T09:00"),"trailer_id":app.find_by_plate(db,"trailers","TR-EMPTY")["id"],
+                                         "unloading_arrive_at":"2030-01-08T12:00"})
+            self.assertTrue(app.order_overlaps(db,again))
             self.assertTrue(first)
 
     def test_tractor_change_splits_the_order_between_tractors(self):
@@ -616,9 +648,13 @@ class DispatchTests(unittest.TestCase):
             # The first tractor is free after leaving the trailer at the base; the second one is busy until delivery.
             free = dict(self.manual_payload(trailer="",trailer_id="",pickup_at="2030-01-07T16:00",unloading_arrive_at="2030-01-07T20:00"))
             app.create_order(db,free)
-            with self.assertRaisesRegex(ValueError,"already assigned"):
-                app.create_order(db,{**free,"truck_id":second,"driver_id":second_driver,"pickup_at":"2030-01-08T08:00",
-                                     "unloading_arrive_at":"2030-01-08T12:00"})
+            self.assertEqual(app.order_overlaps(db,order),[])
+            # The second tractor is busy until delivery: a load planned in between is allowed but shows the overlap.
+            busy = app.create_order(db,{**free,"truck_id":second,"driver_id":second_driver,"pickup_at":"2030-01-08T08:00",
+                                        "unloading_arrive_at":"2030-01-08T12:00"})
+            self.assertIn(app.item(db,"orders",order)["number"],app.order_overlaps(db,busy))
+            db.execute("DELETE FROM order_stops WHERE order_id=?",(busy,))
+            db.execute("DELETE FROM orders WHERE id=?",(busy,))
             weeks = weekly_availability(db,{"week_offset":0,"week_count":1},now=app.parse_time("2030-01-07T06:00"))
             first_free = [w for w in weeks["weeks"][0]["windows"] if w["truck_id"]==second]
             self.assertEqual(first_free[0]["location"]["id"],self.b)  # free at the unloading

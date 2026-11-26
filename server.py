@@ -36,7 +36,7 @@ from tariffs import delete_tariff, save_tariff
 import photos
 from nearby import log_contact, nearby_companies
 from nextloads import next_loads
-from orders import assign_tractor, build_plan, carry_clock, create_order, set_stop_status, update_stop_eta, uses_rules
+from orders import assign_tractor, build_plan, carry_clock, create_order, set_stop_status, update_stop_eta, uses_rules, move_order, order_overlaps
 from planner import UTC, ZONE, parse_time, stamp
 from storage import TursoReplica, backup_to, connect, rows
 from upcoming import weekly_availability
@@ -641,6 +641,9 @@ class Handler(BaseHTTPRequestHandler):
                     result = {"route":route,"plan":plan}
                 elif path == "/api/orders":
                     result = {"id":create_order(db,data)}
+                    clash = order_overlaps(db,result["id"])
+                    if clash:
+                        result["warning"] = f"Same tractor, driver or trailer at the same time as {', '.join(clash)}." 
                     user = self.auth.user(self.headers.get("Cookie")) or ""
                     if data.get("request_id"):  # created from a client request: link them
                         link_order(db,data["request_id"],result["id"],user)
@@ -682,6 +685,8 @@ class Handler(BaseHTTPRequestHandler):
                     result = {"ok":True}
                 elif path == "/api/stop-status":
                     result = set_stop_status(db,data)
+                elif path == "/api/order-move":
+                    result = move_order(db,data)
                 elif path == "/api/stop-eta":
                     result = update_stop_eta(db,data)
                 elif path == "/api/assign-tractor":

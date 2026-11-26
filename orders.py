@@ -426,7 +426,9 @@ def create_order(db, data):
     picks = [stop["pick"]["id"] for stop in stops if stop.get("pick")]
     collision = conflicts(db, truck["id"], driver["id"], trailer, pickup, parse_time(plan["available_at"]), data.get("id",0),
                           trailer_id=trailer_id, trailer_ids=picks, segments=plan_segments(truck, driver, stops, plan))
-    if collision:
+    # Manual times (freestyle planning by day): the next load may be planned before the previous one is unloaded;
+    # the office sees a warning. Driving-rules orders stay strictly one after the other.
+    if collision and uses_rules(plan):
         busy = [row for row in db.execute("SELECT number, pickup_at, available_at FROM orders WHERE status!='Cancelled'")
                 if row["number"] in collision]
         detail = "; ".join(f"{row['number']} until {parse_time(row['available_at']).astimezone(ZONE):%d.%m %H:%M}"
@@ -629,6 +631,36 @@ def set_stop_status(db, data):
         if clash:
             warning = f"The confirmed delivery overlaps with {', '.join(clash)}. Check the next order."
     return {"status": status, "message": message, "warning": warning}
+
+
+def order_overlaps(db, order_id):
+    """Numbers of the other orders that use the same tractor, driver or trailer at the same time as this one."""
+    order = item(db, "orders", order_id)
+    stops = order_stop_rows(db, order["id"])
+    return conflicts(db, order["truck_id"], order["driver_id"], order["trailer"], parse_time(order["pickup_at"]),
+                     parse_time(order["available_at"]), order["id"], trailer_id=order["trailer_id"],
+                     trailer_ids=[s["pick_trailer_id"] for s in stops if s["pick_trailer_id"]],
+                     segments=stored_segments(order, stops))
+
+
+def move_order(db, data):
+    """Drag on Daily planning: the stops not yet confirmed move by `minutes` (earlier or later, other days too)."""
+    order = item(db, "orders", data.get("order_id"))
+    try:
+        minutes = int(data.get("minutes"))
+    except (TypeError, ValueError):
+        raise ValueError("Choose how far to move the order.") from None
+    if not minutes or abs(minutes) > 14 * 24 * 60:
+        raise ValueError("Move the order by up to two weeks.")
+    stops = order_stop_rows(db, order["id"])
+    first = next((s for s in stops if s["status"] != "Done"), None)
+    if first is None or order["status"] in ("Cancelled", "Completed"):
+        raise ValueError(f"{order['number']} is {order['status'].lower()}; its times can no longer change.")
+    when = parse_time(first["planned_at"]) + timedelta(minutes=minutes)
+    result = update_stop_eta(db, {"order_id": order["id"], "seq": first["seq"], "planned_at": stamp(when)})
+    local = when.astimezone(ZONE)
+    what = "Loading" if first["kind"] == "Loading" and first["seq"] == 1 else first["kind"]
+    return {"message": f"{order['number']}: {what.lower()} now {local:%d.%m %H:%M}.", "warning": result["warning"]}
 
 
 def update_stop_eta(db, data):
