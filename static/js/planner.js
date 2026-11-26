@@ -61,9 +61,10 @@ function plannerSide(){const o=state.orders.find(x=>x.id===plannerSel);if(!o)ret
   ${o.status!=='Cancelled'?`<button class="btn" data-action="reload-order" data-id="${o.id}">＋ Next load after this</button>`:''}
   ${ptMovable(o)?`<div class="pt-move"><button class="btn small" data-action="move-order" data-id="${o.id}" data-minutes="-1440">◀ 1 day earlier</button><button class="btn small" data-action="move-order" data-id="${o.id}" data-minutes="1440">1 day later ▶</button></div>`:''}</div>`;}
 // A trip can be moved while it has stops still to confirm.
-// The card can be made longer or shorter while its final unloading is not confirmed (and it ends on this day).
-const ptStretchable=t=>ptMovable(t.o)&&!t.endsAfter&&orderStops(t.o).at(-1)?.status!=='Done';
-const ptMovable=o=>!['Cancelled','Completed'].includes(o.status)&&orderStops(o).some(s=>s.status!=='Done');
+// The card can be made longer or shorter when it ends on this day.
+const ptStretchable=t=>ptMovable(t.o)&&!t.endsAfter;
+// Every trip but a cancelled one can be moved; a completed one moves with the driver's confirmed times.
+const ptMovable=o=>o.status!=='Cancelled';
 // Inline styles are blocked by the page's security policy, so the bars are placed here from their minutes.
 function placeTimeline(){const span=PT_TO-PT_FROM;for(const el of document.querySelectorAll('.pt-track [data-a]')){const a=Number(el.dataset.a),b=Math.min(PT_TO,Math.max(Number(el.dataset.b),a+20));el.style.left=((Math.min(a,PT_TO-20)-PT_FROM)/span*100)+'%';el.style.width=((b-Math.min(a,PT_TO-20))/span*100)+'%';}
   for(const el of document.querySelectorAll('.pt-track [data-min]'))el.style.left=((Number(el.dataset.min)-PT_FROM)/span*100)+'%';

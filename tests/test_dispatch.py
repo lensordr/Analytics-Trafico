@@ -488,8 +488,22 @@ class DispatchTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     app.move_order(db,bad)
             app.set_stop_status(db,{"order_id":first,"seq":2,"done_at":"2030-01-08T14:00"})
-            with self.assertRaisesRegex(ValueError,"completed"):
-                app.move_order(db,{"order_id":first,"minutes":60})
+            # A completed (green) trip moves too, with the driver's confirmed times.
+            self.assertIn("moved, delivered on 08.01",app.move_order(db,{"order_id":first,"minutes":60})["message"])
+            order = app.item(db,"orders",first)
+            self.assertEqual((order["status"],order["pickup_at"][:16],order["delivered_at"][:16],order["available_at"][:16]),
+                             ("Completed","2030-01-07T09:00","2030-01-08T15:00","2030-01-08T15:00"))
+            self.assertEqual([s["done_at"][:16] for s in app.order_stop_rows(db,first)],["2030-01-07T09:30","2030-01-08T15:00"])
+            # The client keeps seeing the real confirmation times, not the office's move.
+            self.assertEqual([s["driver_done_at"][:16] for s in app.order_stop_rows(db,first)],["2030-01-07T08:30","2030-01-08T14:00"])
+            client_steps = app.client_steps(db,[first])[first]
+            self.assertEqual([s["done_at"][:16] for s in client_steps],["2030-01-07T08:30","2030-01-08T14:00"])
+            # ...and is made shorter in proportion from its start (30 h → 15 h).
+            self.assertIn("shorter",app.move_order(db,{"order_id":first,"minutes":-900,"end":True})["message"])
+            self.assertEqual([s["done_at"][:16] for s in app.order_stop_rows(db,first)],["2030-01-07T09:15","2030-01-08T00:00"])
+            self.assertEqual(app.item(db,"orders",first)["delivered_at"][:16],"2030-01-08T00:00")
+            with self.assertRaisesRegex(ValueError,"at least 15 minutes"):
+                app.move_order(db,{"order_id":first,"minutes":-900,"end":True})
             # The tractor rows keep the order they were dragged into.
             other = app.save_master(db,"trucks",{"plate":"AAA-000","operation":"Local"})
             app.set_truck_order(db,{"ids":[self.truck,other]})

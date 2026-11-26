@@ -321,7 +321,9 @@ class Handler(BaseHTTPRequestHandler):
         ids = [order_id for request in history for order_id in request["order_ids"]]
         with connect(self.server.database) as db:
             orders = {row["id"]: row for row in db.execute(
-                f"SELECT id, plate, trailer, pickup_at, status FROM orders WHERE id IN ({','.join('?' * len(ids))})", ids)} if ids else {}
+                f"SELECT o.id, o.plate, o.trailer, o.status, COALESCE((SELECT COALESCE(s.driver_done_at, s.done_at) FROM order_stops s "
+                f"WHERE s.order_id=o.id AND s.seq=1 AND s.status='Done'), o.pickup_at) AS pickup_at FROM orders o "
+                f"WHERE o.id IN ({','.join('?' * len(ids))})", ids)} if ids else {}
         for request in history:
             typed = lambda side: f'{request[side + "_place"]["company"]} ({request[side + "_place"]["city"]})' if request.get(side + "_place") else request[side + "_text"]
             request["route"] = f'{label(request["from_id"], typed("from"))} → {label(request["to_id"], typed("to"))}'
@@ -334,6 +336,9 @@ class Handler(BaseHTTPRequestHandler):
         for row in transports:
             row["day"] = parse_time(row["pickup_at"]).astimezone(ZONE).date().isoformat()
             row["steps"] = [{**s, "done": local(s["done_at"]) if s["status"] == "Done" else ""} for s in steps.get(row["id"], [])]
+            loaded = next((s["done_at"] for s in steps.get(row["id"], []) if s["seq"] == 1 and s["status"] == "Done" and s["done_at"]), None)
+            if loaded:
+                row["day"] = parse_time(loaded).astimezone(ZONE).date().isoformat()
         tab = "history" if query.get("tab") == "history" else "new"
         today = datetime.now(UTC).astimezone(ZONE).date().isoformat()
         self.send_body(200 if not error else 400, client.render(token, company, routes, history, lang, today, message, error, form, tab, transports),

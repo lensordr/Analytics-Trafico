@@ -474,6 +474,11 @@ def initialize(target):
         if "docs" not in columns:
             db.execute("ALTER TABLE order_stops ADD COLUMN docs TEXT NOT NULL DEFAULT ''")
             db.execute("UPDATE order_stops SET docs='n/a' WHERE status='Done'")
+        if "driver_done_at" not in columns:
+            # The time of the real confirmation (driver link or office), kept when the dispatcher later moves the
+            # trip on Daily planning: the client sees only this one.
+            db.execute("ALTER TABLE order_stops ADD COLUMN driver_done_at TEXT")
+            db.execute("UPDATE order_stops SET driver_done_at=done_at WHERE status='Done'")
         db.execute("CREATE UNIQUE INDEX IF NOT EXISTS tariffs_source ON tariffs(source_id)")
         columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(locations)")}
         if "transport_company" not in columns:

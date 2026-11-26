@@ -239,7 +239,8 @@ def client_steps(db, order_ids):
                           "ORDER BY order_id, seq, n", order_ids):
         photos.setdefault((row["order_id"], row["seq"]), []).append({"id": row["id"], "n": row["n"], "stored": bool(row["stored"])})
     steps = {}
-    for row in db.execute(f"SELECT s.order_id, s.seq, s.kind, s.status, s.done_at, l.company, l.city FROM order_stops s "
+    # The real confirmation times only (driver_done_at): moves made by the office on Daily planning stay internal.
+    for row in db.execute(f"SELECT s.order_id, s.seq, s.kind, s.status, COALESCE(s.driver_done_at, s.done_at) AS done_at, l.company, l.city FROM order_stops s "
                           f"JOIN locations l ON l.id=s.location_id WHERE s.order_id IN ({marks}) AND s.kind IN ('Loading','Unloading') "
                           "ORDER BY s.order_id, s.seq", order_ids):
         steps.setdefault(row["order_id"], []).append({"seq": row["seq"], "kind": row["kind"], "status": row["status"],

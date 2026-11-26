@@ -575,7 +575,7 @@ def set_stop_status(db, data):
         earlier = [parse_time(s["done_at"]) for s in stops if s["seq"] < seq and s["done_at"]]
         if earlier and at < max(earlier):
             raise ValueError("The confirmation time cannot be before the previous stop.")
-        db.execute("UPDATE order_stops SET status='Done', done_at=? WHERE id=?", (stamp(at), stop["id"]))
+        db.execute("UPDATE order_stops SET status='Done', done_at=?, driver_done_at=? WHERE id=?", (stamp(at), stamp(at), stop["id"]))
         stop.update(status="Done", done_at=stamp(at))
         if seq == 1:
             attach_trailer(db, order["truck_id"], order["trailer_id"], plates)
@@ -595,7 +595,7 @@ def set_stop_status(db, data):
         later = [s for s in stops if s["seq"] > seq and s["status"] == "Done"]
         if stop["status"] != "Done" or later:
             raise ValueError("Only the last confirmed stop can be undone.")
-        db.execute("UPDATE order_stops SET status='Planned', done_at=NULL WHERE id=?", (stop["id"],))
+        db.execute("UPDATE order_stops SET status='Planned', done_at=NULL, driver_done_at=NULL WHERE id=?", (stop["id"],))
         undone_at = stop["done_at"]
         stop.update(status="Planned", done_at=None)
         if stop["kind"] == "Trailer swap":
@@ -644,7 +644,8 @@ def order_overlaps(db, order_id):
 
 
 def move_order(db, data):
-    """Drag on Daily planning: the stops not yet confirmed move by `minutes` (earlier or later, other days too)."""
+    """Drag on Daily planning: the stops not yet confirmed move by `minutes` (earlier or later, other days too).
+    A completed trip moves (or stretches) as a whole, its confirmed times with it."""
     order = item(db, "orders", data.get("order_id"))
     try:
         minutes = int(data.get("minutes"))
@@ -655,8 +656,10 @@ def move_order(db, data):
     stops = order_stop_rows(db, order["id"])
     # `end`: the card is made longer or shorter (its right edge); otherwise the whole trip moves.
     stretch = data.get("end") in (True, 1, "1", "true")
+    if order["status"] == "Completed":
+        return retime_completed(db, order, stops, minutes, stretch)
     first = next((s for s in stops if s["status"] != "Done"), None)
-    if first is None or order["status"] in ("Cancelled", "Completed"):
+    if first is None or order["status"] == "Cancelled":
         raise ValueError(f"{order['number']}: the unloading is already confirmed; it can no longer change."
                          if order["status"] not in ("Cancelled", "Completed") else
                          f"{order['number']} is {order['status'].lower()}; its times can no longer change.")
@@ -666,6 +669,41 @@ def move_order(db, data):
     result = update_stop_eta(db, {"order_id": order["id"], "seq": first["seq"], "planned_at": stamp(when)})
     what = "loading" if first["kind"] == "Loading" and first["seq"] == 1 else first["kind"].lower()
     return {"message": f"{order['number']}: {what} on {when.astimezone(ZONE):%d.%m}.", "warning": result["warning"]}
+
+
+def retime_completed(db, order, stops, minutes, stretch):
+    """A completed trip (green card) moved or made longer/shorter: every time of it (planned and confirmed by the
+    driver) moves, or stretches in proportion from its start. The client keeps seeing the real confirmation times."""
+    begin_write(db)
+    start, end = parse_time(order["pickup_at"]), parse_time(order["available_at"])
+    shift = timedelta(minutes=minutes)
+    if stretch:
+        if (end - start).total_seconds() <= 0 or (end + shift - start).total_seconds() < 15 * 60:
+            raise ValueError(f"{order['number']}: a trip lasts at least 15 minutes.")
+        factor = (end + shift - start) / (end - start)
+        at = lambda value: stamp(start + (parse_time(value) - start) * factor) if value else value
+    else:
+        at = lambda value: stamp(parse_time(value) + shift) if value else value
+    for s in stops:
+        s["planned_at"], s["planned_end_at"], s["done_at"] = at(s["planned_at"]), at(s["planned_end_at"]), at(s["done_at"])
+        db.execute("UPDATE order_stops SET planned_at=?, planned_end_at=?, done_at=? WHERE id=?",
+                   (s["planned_at"], s["planned_end_at"], s["done_at"], s["id"]))
+    first, last = stops[0], stops[-1]
+    plan = json.loads(order["plan"] or "{}")
+    plan.update(arrival_at=last["planned_at"], unloading_at=last["planned_at"], available_at=at(order["available_at"]),
+                eta_updated_at=stamp(datetime.now(UTC)))
+    plan["stops"] = [{"arrival_at": s["planned_at"], "start_at": s["planned_at"], "end_at": s["planned_end_at"]} for s in stops]
+    values = (at(order["pickup_at"]), last["planned_at"], last["planned_at"], at(order["available_at"]),
+              at(order["delivered_at"]), json.dumps(plan), order["id"])
+    db.execute("UPDATE orders SET pickup_at=?, arrival_at=?, unloading_at=?, available_at=?, delivered_at=?, plan=? WHERE id=?", values)
+    moved = {**order, "pickup_at": values[0], "available_at": values[3]}
+    clash = conflicts(db, order["truck_id"], order["driver_id"], order["trailer"], parse_time(values[0]), parse_time(values[3]),
+                      order["id"], trailer_id=order["trailer_id"], trailer_ids=[s["pick_trailer_id"] for s in stops if s["pick_trailer_id"]],
+                      segments=stored_segments(moved, stops))
+    day = parse_time(values[4] or last["planned_at"]).astimezone(ZONE)
+    what = ("longer" if minutes > 0 else "shorter") if stretch else "moved"
+    return {"message": f"{order['number']}: {what}, delivered on {day:%d.%m} (the driver's confirmed times changed too).",
+            "warning": ("Now overlaps with " + ", ".join(clash) + ". Check the next order.") if clash else ""}
 
 
 def stretch_order(db, order, stops, minutes):
