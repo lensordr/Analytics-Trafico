@@ -19,6 +19,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 import assistant
 import autobackup
 import client
+import billing
 import deca
 import driver
 import oauth
@@ -567,6 +568,19 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as error:
                 return self.send_body(404, {"error": str(error)})
             return self.send_body(200, body, "image/jpeg", {"Cache-Control": "private, max-age=86400"})
+        if path == "/api/invoice.pdf":
+            try:
+                with connect(self.server.database) as db:
+                    filename, body = billing.invoice_pdf(db, dict(parse_qsl(urlsplit(self.path).query)).get("id"))
+            except ValueError as error:
+                return self.send_body(404, {"error": str(error)})
+            self.send_response(200)
+            self.send_header("Content-Type", "application/pdf")
+            self.send_header("Content-Disposition", f'inline; filename="{filename}"')
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return self.wfile.write(body)
         if path == "/api/deca.pdf":
             query = dict(parse_qsl(urlsplit(self.path).query))
             try:
@@ -690,6 +704,16 @@ class Handler(BaseHTTPRequestHandler):
                     result = {"ok":True}
                 elif path == "/api/stop-status":
                     result = set_stop_status(db,data)
+                elif path == "/api/billing":
+                    result = billing.billing_state(db,data)
+                elif path == "/api/billing-line":
+                    result = billing.save_line(db,data)
+                elif path == "/api/billing-issuer":
+                    result = billing.save_issuer(db,data)
+                elif path == "/api/invoice-create":
+                    result = billing.create_invoice(db,data,self.auth.user(self.headers.get("Cookie")) or "")
+                elif path == "/api/invoice-cancel":
+                    result = billing.cancel_invoice(db,data,self.auth.user(self.headers.get("Cookie")) or "")
                 elif path == "/api/truck-order":
                     result = set_truck_order(db,data)
                 elif path == "/api/order-move":

@@ -453,6 +453,63 @@ class DispatchTests(unittest.TestCase):
         payload.update(extra)
         return payload
 
+    def test_billing_pending_weight_price_invoice_and_cancel(self):
+        import billing
+        with connect(self.database) as db:
+            db.execute("UPDATE locations SET nif='B11111111', address='Calle 1' WHERE id=?",(self.a,))
+            # Two trips of the same tractor for one client in January (per tonne), one in February.
+            ids = []
+            for pickup,unload in (("2030-01-07T08:00","2030-01-07T15:00"),("2030-01-09T08:00","2030-01-09T15:00"),("2030-02-04T08:00","2030-02-04T15:00")):
+                order = app.create_order(db,self.manual_payload(pickup_at=pickup,unloading_arrive_at=unload,client_id=self.a,rate_basis="loading_t",rate=20))
+                for seq in (1,2):
+                    app.set_stop_status(db,{"order_id":order,"seq":seq,"done_at":(pickup if seq==1 else unload)})
+                ids.append(order)
+            state = billing.billing_state(db)
+            self.assertEqual([(g["month"],len(g["lines"]),g["ready"]) for g in state["pending"]],[("2030-01",2,False),("2030-02",1,False)])
+            self.assertEqual(state["pending"][0]["lines"][0]["missing"],["weight","price"])
+            with self.assertRaisesRegex(ValueError,"enter the weight"):
+                billing.create_invoice(db,{"order_ids":ids[:2]})
+            # The weight is typed by hand; the price follows the rate (at least 24 t), or a total typed by hand.
+            line = billing.save_line(db,{"order_id":ids[0],"weight_kg":26000,"km":610,"material":"Chatarra"})["line"]
+            self.assertEqual((line["amount"],line["km"],line["material"]),(520.0,610,"Chatarra"))
+            self.assertEqual(billing.save_line(db,{"order_id":ids[1],"weight_kg":12000})["line"]["amount"],480.0)
+            self.assertEqual(billing.save_line(db,{"order_id":ids[1],"weight_kg":12000,"amount":450})["line"]["amount"],450.0)
+            with self.assertRaisesRegex(ValueError,"one client, one tractor and one month"):
+                billing.save_line(db,{"order_id":ids[2],"weight_kg":24000})
+                billing.create_invoice(db,{"order_ids":ids})
+            # MalcomTrans issues; it needs its NIF first.
+            with self.assertRaisesRegex(ValueError,"Add the NIF and address of MalcomTrans"):
+                billing.create_invoice(db,{"order_ids":ids[:2]})
+            own = billing.issuers(db)[0]
+            billing.save_issuer(db,{**own,"name":"Malcom Trans S.L.","nif":"B99999999","iban":"ES00 1234"})
+            with self.assertRaisesRegex(ValueError,"NIF and address of Malcom"):
+                billing.create_invoice(db,{"order_ids":ids[:2]})
+            billing.save_issuer(db,{**own,"name":"Malcom Trans S.L.","nif":"B99999999","iban":"ES00 1234","address":"Calle Mayor 1","postal_code":"08100","city":"Mollet"})
+            made = billing.create_invoice(db,{"order_ids":ids[:2],"issue_date":"2030-02-01"})
+            self.assertEqual(made["number"],"MT-2030-0001")
+            invoice = db.execute("SELECT * FROM invoices WHERE id=?",(made["id"],)).fetchone()
+            self.assertEqual((invoice["base"],invoice["iva"],invoice["irpf"],invoice["total"]),(970.0,203.7,0.0,1173.7))
+            state = billing.billing_state(db)
+            self.assertEqual([g["month"] for g in state["pending"]],["2030-02"])  # January is Done
+            with self.assertRaisesRegex(ValueError,"already on an invoice"):
+                billing.save_line(db,{"order_id":ids[0],"weight_kg":1})
+            name, pdf = billing.invoice_pdf(db,made["id"])
+            self.assertEqual(name,"Factura-MT-2030-0001.pdf")
+            self.assertTrue(pdf.startswith(b"%PDF") and b"MT-2030-0001" in pdf and b"1.173,70" in pdf)
+            # An autónomo working through MalcomTrans: its own series, IVA 21% and IRPF 1%, issued on its behalf.
+            billing.save_issuer(db,{"carrier":"Test Carrier","name":"Test Autonomo","nif":"X1234567L","series":"TA","iva_pct":21,"irpf_pct":1,"address":"Calle 2","city":"Sabadell"})
+            made2 = billing.create_invoice(db,{"order_ids":[ids[2]],"issue_date":"2030-03-01"})
+            self.assertEqual(made2["number"],"TA-2030-0001")
+            invoice = db.execute("SELECT * FROM invoices WHERE id=?",(made2["id"],)).fetchone()
+            self.assertEqual((invoice["base"],invoice["iva"],invoice["irpf"],invoice["total"]),(480.0,100.8,4.8,576.0))
+            self.assertIn(b"en nombre y por cuenta de Test Autonomo",billing.invoice_pdf(db,made2["id"])[1])
+            # Cancelled: the number stays used, the trips are Pending again.
+            billing.cancel_invoice(db,{"id":made["id"]})
+            self.assertEqual([len(g["lines"]) for g in billing.billing_state(db)["pending"]],[2])
+            again = billing.create_invoice(db,{"order_ids":ids[:2],"issue_date":"2030-03-02"})
+            self.assertEqual(again["number"],"TA-2030-0002")  # their carrier has its own issuer since
+            self.assertEqual(db.execute("SELECT status FROM invoices WHERE id=?",(made["id"],)).fetchone()[0],"Cancelled")
+
     def test_notebook_planning_overlap_and_move(self):
         with connect(self.database) as db:
             first = app.create_order(db,self.manual_payload())  # loads Mon 08:00, unloads Tue 15:00

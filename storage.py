@@ -474,6 +474,29 @@ def initialize(target):
         if "docs" not in columns:
             db.execute("ALTER TABLE order_stops ADD COLUMN docs TEXT NOT NULL DEFAULT ''")
             db.execute("UPDATE order_stops SET docs='n/a' WHERE status='Done'")
+        # Billing: who issues (MalcomTrans, and the autónomos it invoices for), the invoices, and per order the
+        # data typed on the Billing page (weight, km, material, rate, total) and its invoice.
+        db.execute("""CREATE TABLE IF NOT EXISTS billing_issuers (
+            id INTEGER PRIMARY KEY, carrier TEXT NOT NULL UNIQUE COLLATE NOCASE, name TEXT NOT NULL,
+            nif TEXT NOT NULL DEFAULT '', address TEXT NOT NULL DEFAULT '', postal_code TEXT NOT NULL DEFAULT '',
+            city TEXT NOT NULL DEFAULT '', country TEXT NOT NULL DEFAULT 'España', iban TEXT NOT NULL DEFAULT '',
+            series TEXT NOT NULL UNIQUE, iva_pct REAL NOT NULL DEFAULT 21, irpf_pct REAL NOT NULL DEFAULT 0,
+            own INTEGER NOT NULL DEFAULT 0)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS invoices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, issuer_id INTEGER NOT NULL REFERENCES billing_issuers(id),
+            series TEXT NOT NULL, year TEXT NOT NULL, seq INTEGER NOT NULL, number TEXT NOT NULL, issue_date TEXT NOT NULL,
+            month TEXT NOT NULL, client_id INTEGER REFERENCES locations(id), client TEXT NOT NULL DEFAULT '',
+            truck_id INTEGER REFERENCES trucks(id), plate TEXT NOT NULL DEFAULT '',
+            base REAL NOT NULL, iva_pct REAL NOT NULL, iva REAL NOT NULL, irpf_pct REAL NOT NULL, irpf REAL NOT NULL,
+            total REAL NOT NULL, notes TEXT NOT NULL DEFAULT '', lines TEXT NOT NULL, issuer_data TEXT NOT NULL,
+            client_data TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'Issued', created_at TEXT NOT NULL,
+            created_by TEXT NOT NULL DEFAULT '', cancelled_at TEXT, cancelled_by TEXT NOT NULL DEFAULT '',
+            UNIQUE (issuer_id, year, seq))""")
+        order_columns = {row["name"].lower() for row in db.execute("PRAGMA table_info(orders)")}
+        for column, kind in (("bill_weight_kg", "REAL"), ("bill_km", "REAL"), ("bill_material", "TEXT"),
+                             ("bill_rate", "REAL"), ("bill_amount", "REAL"), ("invoice_id", "INTEGER REFERENCES invoices(id)")):
+            if column not in order_columns:
+                db.execute(f"ALTER TABLE orders ADD COLUMN {column} {kind}")
         if "driver_done_at" not in columns:
             # The time of the real confirmation (driver link or office), kept when the dispatcher later moves the
             # trip on Daily planning: the client sees only this one.
