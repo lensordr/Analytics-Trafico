@@ -46,6 +46,7 @@ document.addEventListener('click',async event=>{const nav=event.target.closest('
   if(action==='plan-select'){plannerSel=Number(id);for(const el of document.querySelectorAll('.pt-trip'))el.classList.toggle('sel',el.dataset.id===id);const side=$('.pt-side');if(side)side.innerHTML=plannerSide();return;}
   if(action==='plan-chip'){plannerChip=id;render();return;}
   if(action==='plan-alerts'||action==='plan-todo'){const box=$(action==='plan-todo'?'#pt-todo':'#pt-alerts');if(box)box.hidden=!box.hidden;return;}
+  if(action==='plan-cancel'){const o=state.orders.find(x=>x.id===Number(id));if(!o||!window.confirm(`Cancel ${o.number} (${o.plate})? It will stay in history.`))return;await api('/api/order-status',{id:Number(id),status:'Cancelled'});if(plannerSel===Number(id))plannerSel=null;await refresh();toast(`${o.number} cancelled.`);return;}
   if(action==='plan-slot'){planSlot(button,event.clientX);return;}
   if(action==='move-order'){button.disabled=true;const result=await api('/api/order-move',{order_id:Number(id),minutes:Number(button.dataset.minutes)});plannerSel=Number(id);await refresh();toast(result.message+(result.warning?' '+result.warning:''),!!result.warning);return;}
   if(action==='plan-truck'){const t=state.trucks.find(x=>x.id===Number(id));openOrder({truck_id:t.id,driver_id:t.driver_id,trailer_id:t.trailer_id,loading_id:t.location_id||'',pickup_at:selectedDay+'T08:00'});return;}
