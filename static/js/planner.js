@@ -1,8 +1,9 @@
 'use strict';
 // Daily planning: stops of the selected day.
-// The day as a notebook: every tractor is a row, its trips are cards from 05:00 to 21:00. Click a card for its actions
-// on the right, drag it left/right to move it, click an empty time on a row to plan a new load there.
-// Trips that overlap on one tractor stack in lanes. The full lists stay below, folded.
+// The day as a notebook: every tractor is a row, its trips of the day are cards of one size, one after the other
+// (loading → unloading, no hours: the hours are in the details). A trip shows on its loading day and on its unloading day.
+// Click a card for its actions on the right, drag it left/right to change the order, click an empty place on a row to plan
+// a new load. The full lists stay below, folded.
 const PT_FROM=5*60,PT_TO=21*60,PT_LANE=34,PT_SNAP=15;let plannerChip='all',plannerSel=null,ptDrag=null,ptJustDragged=false;
 const madridClock=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Madrid',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
 function madridAt(value){const p=Object.fromEntries(madridClock.formatToParts(new Date(value)).map(x=>[x.type,x.value]));return {day:`${p.year}-${p.month}-${p.day}`,min:Number(p.hour)*60+Number(p.minute)};}
@@ -14,37 +15,32 @@ const PT_ORDER={late:0,go:1,plan:2,done:3};
 function plannerRows(){const rows=new Map();
   // Every active tractor has its row, also with nothing planned yet (like a page of the notebook).
   for(const t of state.trucks)if(t.active&&!t.archived_at)rows.set(t.id,{truck:t,trips:[]});
-  for(const o of filteredOrders())for(const p of orderParts(o)){if(!p.truck_id)continue;const start=madridAt(p.start).day,end=madridAt(p.end).day;if(start>selectedDay||end<selectedDay)continue;
+  for(const o of filteredOrders())for(const p of orderParts(o)){if(!p.truck_id)continue;const start=madridAt(p.start).day,end=madridAt(p.end).day;if(start!==selectedDay&&end!==selectedDay)continue;
     const row=rows.get(p.truck_id)||{truck:state.trucks.find(t=>t.id===p.truck_id),trips:[]};const stops=partStops(o,p);
-    row.trips.push({o,p,state:ptState(o,p),from:getLocation(stops[0]?.location_id),to:getLocation(stops[stops.length-1]?.location_id),a:ptMinute(p.start),b:ptMinute(p.end),startsBefore:start<selectedDay,endsAfter:end>selectedDay});rows.set(p.truck_id,row);}
+    row.trips.push({o,p,state:ptState(o,p),from:getLocation(stops[0]?.location_id),to:getLocation(stops[stops.length-1]?.location_id),at:madridAt(p.start).min,startsBefore:start<selectedDay,endsAfter:end>selectedDay});rows.set(p.truck_id,row);}
   return [...rows.values()].filter(r=>r.truck&&r.truck.plate.toLowerCase().includes(filters.plate.toLowerCase())).map(r=>{r.trips.sort((x,y)=>Date.parse(x.p.start)-Date.parse(y.p.start));const last=r.trips[r.trips.length-1];
-    // Lanes: a trip that starts before the previous one ends goes on the next line of the row.
-    const ends=[];for(const t of r.trips){let lane=ends.findIndex(end=>end<=t.a);if(lane<0){lane=ends.length;ends.push(0);}ends[lane]=Math.max(t.b,t.a+20);t.lane=lane;}r.lanes=Math.max(1,ends.length);
     r.idle=!r.trips.length;
     r.state=r.idle?'idle':r.trips.some(t=>t.state==='late')?'late':r.trips.some(t=>t.state==='go')?'go':r.trips.every(t=>t.state==='done')?'done':'plan';
-    // Free after the last trip of the day, while there is still working time (until 19:00) and it is not late.
-    r.free=last&&!last.endsAfter&&last.state!=='late'&&last.b<19*60?last:null;return r;})
+    // Free after the last trip of the day, when it is unloaded the same day and not late.
+    r.free=last&&!last.endsAfter&&last.state!=='late'?last:null;return r;})
     .sort((a,b)=>(a.truck.plan_order??1e9)-(b.truck.plan_order??1e9)||a.truck.plate.localeCompare(b.truck.plate));}
 const ptHHMM=m=>`${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
 function plannerView(){const rows=plannerRows(),isFree=r=>r.free||r.idle,count=k=>rows.filter(r=>k==='free'?isFree(r):r.state===k).length,shown=rows.filter(r=>plannerChip==='all'||(plannerChip==='free'?isFree(r):r.state===plannerChip));
   const all=rows.flatMap(r=>r.trips);if(!all.some(t=>t.o.id===plannerSel))plannerSel=(all.find(t=>t.state==='late')||all.find(t=>t.state==='go')||all[0])?.o.id??null;
   const alerts=deliveryAlerts(),overdue=alerts.filter(x=>x.alert.kind==='overdue').length,today=selectedDay===dayOf(state.now);
   const chip=(k,label,n)=>`<button class="pt-chip ${k} ${plannerChip===k?'on':''}" data-action="plan-chip" data-id="${k}">${label} <b>${n}</b></button>`;
-  const hours=[];for(let h=7;h<=19;h+=2)hours.push(`<span class="pt-hour" data-min="${h*60}">${String(h).padStart(2,'0')}:00</span>`);
-  const nowMark=today?`<i class="pt-now" data-min="${ptMinute(Date.now())}" title="Now"></i>`:'';
   const orders=filteredOrders(),loading=dayStops(orders,'Loading'),unloading=dayStops(orders,'Unloading'),swaps=dayStops(orders,'Trailer swap');
-  const tripButton=t=>`<button class="pt-trip ${t.state} ${t.o.id===plannerSel?'sel':''} ${t.startsBefore?'cut-l':''} ${t.endsAfter?'cut-r':''}" data-action="plan-select" data-id="${t.o.id}" data-a="${t.a}" data-b="${t.b}" data-lane="${t.lane}" ${ptMovable(t.o)?'data-drag="1"':''} title="${esc(`${t.o.number} · ${t.from?.city||'?'} → ${t.to?.city||'?'}${ptMovable(t.o)?' · drag to move · pull the right edge to make it longer or shorter':''}`)}">${t.startsBefore?'‹ ':''}${esc(t.from?.city||'?')} → ${esc(t.to?.city||'?')}${t.endsAfter?' ›':''}${['Planned','In transit'].includes(t.o.status)?`<span class="pt-x" data-action="plan-cancel" data-id="${t.o.id}" role="button" title="Cancel ${esc(t.o.number)}">×</span>`:''}${ptStretchable(t)?'<span class="pt-grip" data-grip aria-hidden="true"></span>':''}</button>`;
-  const row=r=>`<div class="pt-row ${r.state}" data-truck-row="${r.truck.id}"><div class="pt-who" data-row-grip title="Drag up or down to change the order"><strong>${esc(r.truck.plate)}</strong><small>${esc(state.drivers.find(d=>d.id===r.truck.driver_id)?.name||r.trips[0]?.o.driver_name||'')}</small></div><div class="pt-track" data-action="plan-slot" data-truck="${r.truck.id}" data-lanes="${r.lanes}" title="Click to plan a load for ${esc(r.truck.plate)}">${nowMark}${r.trips.map(tripButton).join('')}${r.free?`<button class="pt-free" data-action="reload-order" data-id="${r.free.o.id}" data-a="${r.free.b}" data-b="${PT_TO}" data-lane="0" title="Plan the next load for ${esc(r.truck.plate)}">＋ free ${ptHHMM(r.free.b)} · ${esc(r.free.to?.city||'')}</button>`:''}</div></div>`;
+  const tripButton=t=>`<button class="pt-trip ${t.state} ${t.o.id===plannerSel?'sel':''} ${t.startsBefore?'cut-l':''} ${t.endsAfter?'cut-r':''}" data-action="plan-select" data-id="${t.o.id}" data-at="${t.at}" ${t.startsBefore?'data-earlier="1"':''} ${ptMovable(t.o)&&!t.startsBefore?'data-drag="1"':''} title="${esc(`${t.o.number} · ${t.from?.city||'?'} → ${t.to?.city||'?'}${t.startsBefore?' · loaded on an earlier day':''}${t.endsAfter?' · unloads on a later day':''} · double-click for details`)}">${t.startsBefore?'↓ ':''}${esc(t.from?.city||'?')} → ${esc(t.to?.city||'?')}${t.endsAfter?' ›':''}${['Planned','In transit'].includes(t.o.status)?`<span class="pt-x" data-action="plan-cancel" data-id="${t.o.id}" role="button" title="Cancel ${esc(t.o.number)}">×</span>`:''}</button>`;
+  const row=r=>`<div class="pt-row ${r.state}" data-truck-row="${r.truck.id}"><div class="pt-who" data-row-grip title="Drag up or down to change the order"><strong>${esc(r.truck.plate)}</strong><small>${esc(state.drivers.find(d=>d.id===r.truck.driver_id)?.name||r.trips[0]?.o.driver_name||'')}</small></div><div class="pt-track" data-action="plan-slot" data-truck="${r.truck.id}" title="Click to plan a load for ${esc(r.truck.plate)}">${r.trips.map(tripButton).join('')}${r.free?`<button class="pt-free" data-action="reload-order" data-id="${r.free.o.id}" title="Plan the next load for ${esc(r.truck.plate)}">＋ next · ${esc(r.free.to?.city||'')}</button>`:''}</div></div>`;
   return `<div class="pt-bar"><button class="btn small" data-action="prev-day" aria-label="Previous day">‹</button><input type="date" id="planning-date" value="${selectedDay}" aria-label="Planning day"><button class="btn small" data-action="next-day" aria-label="Next day">›</button><button class="btn small ${today?'':'primary'}" data-action="today">Today</button>
   <h1 class="pt-title">${formatDay(selectedDay,true)}${today?' <small>today</small>':''}</h1><span class="pt-spacer"></span>${alerts.length?`<button class="pt-alert ${overdue?'overdue':''}" data-action="plan-alerts">${overdue?'⚠':'⏱'} ${alerts.length} to follow up</button>`:''}${todoButton()}<button class="btn primary" data-action="new-order">＋ New order</button></div>
   <div id="pt-todo" hidden>${todoPanel()}${itvPanel()}</div><div id="pt-alerts" hidden>${alertsPanel()}</div>
   <div class="pt-chips">${chip('all','All',rows.length)}${chip('late','Late',count('late'))}${chip('go','On the road',count('go'))}${chip('plan','Planned',count('plan'))}${chip('done','Done',count('done'))}${chip('free','Free',count('free'))}
   <span class="pt-spacer"></span><input id="filter-plate" class="pt-search" data-filter="plate" data-suggest="plates" autocomplete="off" placeholder="Find a tractor…" value="${esc(filters.plate)}" aria-label="Find a tractor"></div>
   <div class="pt-layout"><section class="panel pt-board"><div class="pt-scroll"><div class="pt-grid">
-  <div class="pt-row pt-axis"><span></span><div class="pt-track">${hours.join('')}</div></div>
   ${shown.map(row).join('')||`<div class="pt-empty">${empty(rows.length?'No tractor in this filter':'No trips on this day',rows.length?'Choose another filter above.':'Add a loading order, or pick another day.','new-order','New order')}</div>`}
   </div></div>
-  <div class="pt-legend"><span class="done">done</span><span class="go">on the road</span><span class="plan">planned</span><span class="late">late</span><span class="free">free · click to plan</span><span class="tip">Click an empty place on a row for a new load · drag a card to move it, pull its right edge to change its length · drag a tractor up or down</span></div></section>
+  <div class="pt-legend"><span class="done">done</span><span class="go">on the road</span><span class="plan">planned</span><span class="late">late</span><span class="free">free · click to plan</span><span class="tip">Click an empty place on a row for a new load · drag a card left or right to change the order · double-click for details · drag a tractor up or down</span></div></section>
   <aside class="panel pt-side">${plannerSide()}</aside></div>
   <details class="panel pt-lists"><summary>Loading and unloading lists · ${loading.length} loadings · ${unloading.length} unloadings${swaps.length?` · ${swaps.length} swaps`:''} · more filters</summary>
   <div class="filters">${[['loading','Loading place'],['unloading','Unloading place']].map(([k,l])=>`<div class="filter wide"><label for="filter-${k}">${l}</label><input id="filter-${k}" data-filter="${k}" data-suggest="places" autocomplete="off" placeholder="City, company or postcode" value="${esc(filters[k])}"></div>`).join('')}<div class="filter"><label for="filter-operation">Operation</label><select id="filter-operation" data-filter="operation"><option value="">All operations</option>${['International','National','Local'].map(v=>`<option ${filters.operation===v?'selected':''}>${v}</option>`).join('')}</select></div><div class="filter"><label for="filter-status">Order status</label><select id="filter-status" data-filter="status"><option value="">All active</option>${['Planned','In transit','Completed','Cancelled'].map(v=>`<option ${filters.status===v?'selected':''}>${v}</option>`).join('')}</select></div><button class="btn small" data-action="clear-filters">Reset</button></div>
@@ -60,39 +56,34 @@ function plannerSide(){const o=state.orders.find(x=>x.id===plannerSel);if(!o)ret
   ${o.status!=='Cancelled'?`<button class="btn" data-action="open-whatsapp" data-id="${o.id}">💬 WhatsApp driver</button>`:''}${driver?.phone?`<a class="btn" href="${esc(telHref(driver.phone))}">☎ Call ${esc(driver.name)}</a>`:''}
   ${o.status!=='Cancelled'?`<button class="btn" data-action="reload-order" data-id="${o.id}">＋ Next load after this</button>`:''}
   ${ptMovable(o)?`<div class="pt-move"><button class="btn small" data-action="move-order" data-id="${o.id}" data-minutes="-1440">◀ 1 day earlier</button><button class="btn small" data-action="move-order" data-id="${o.id}" data-minutes="1440">1 day later ▶</button></div>`:''}</div>`;}
-// A trip can be moved while it has stops still to confirm.
-// The card can be made longer or shorter when it ends on this day.
-const ptStretchable=t=>ptMovable(t.o)&&!t.endsAfter;
 // Every trip but a cancelled one can be moved; a completed one moves with the driver's confirmed times.
 const ptMovable=o=>o.status!=='Cancelled';
-// Inline styles are blocked by the page's security policy, so the bars are placed here from their minutes.
-function placeTimeline(){const span=PT_TO-PT_FROM;for(const el of document.querySelectorAll('.pt-track [data-a]')){const a=Number(el.dataset.a),b=Math.min(PT_TO,Math.max(Number(el.dataset.b),a+20));el.style.left=((Math.min(a,PT_TO-20)-PT_FROM)/span*100)+'%';el.style.width=((b-Math.min(a,PT_TO-20))/span*100)+'%';}
-  for(const el of document.querySelectorAll('.pt-track [data-min]'))el.style.left=((Number(el.dataset.min)-PT_FROM)/span*100)+'%';
-  for(const el of document.querySelectorAll('.pt-track [data-lane]'))el.style.top=(5+Number(el.dataset.lane)*PT_LANE)+'px';
-  for(const el of document.querySelectorAll('.pt-track[data-lanes]'))el.style.height=(10+Number(el.dataset.lanes)*PT_LANE)+'px';}
-// Minute of the day under the mouse on a row, rounded to PT_SNAP.
-function ptMinuteAt(track,x){const r=track.getBoundingClientRect(),m=PT_FROM+(x-r.left)/r.width*(PT_TO-PT_FROM);return Math.min(PT_TO-30,Math.max(PT_FROM,Math.round(m/PT_SNAP)*PT_SNAP));}
+// The cards flow one after the other (no hours), so there is nothing to place.
+function placeTimeline(){}
 // The load a new trip at `at` follows on this tractor: its unloading is where the truck is.
 function ptPrevious(truckId,at){return state.orders.filter(o=>o.truck_id===truckId&&o.status!=='Cancelled'&&Date.parse(o.pickup_at)<=at).sort((a,b)=>Date.parse(b.pickup_at)-Date.parse(a.pickup_at))[0];}
-function planSlot(track,x){const t=state.trucks.find(v=>v.id===Number(track.dataset.truck));if(!t)return;const at=selectedDay+'T'+ptHHMM(ptMinuteAt(track,x)),prev=ptPrevious(t.id,dispatchInputInstant(at));
+// A new load on a row goes after the tractor's last loading of the day (or at 08:00).
+function planSlot(track){const t=state.trucks.find(v=>v.id===Number(track.dataset.truck));if(!t)return;
+  const last=Math.max(-1,...[...track.querySelectorAll('.pt-trip[data-at]:not([data-earlier])')].map(el=>Number(el.dataset.at)));
+  const at=selectedDay+'T'+ptHHMM(last<0?8*60:Math.min(20*60,last+60)),prev=ptPrevious(t.id,dispatchInputInstant(at));
   openOrder({truck_id:t.id,driver_id:prev?.driver_id||t.driver_id,trailer_id:prev?.trailer_id||t.trailer_id,trailer:prev?.trailer,loading_id:prev?.unloading_id||t.location_id||'',pickup_at:at,timing:'manual',notes:prev?'Next load after '+prev.number:''});}
-// The time under the mouse on an empty part of a row.
-document.addEventListener('mousemove',event=>{const track=event.target.closest?.('.pt-track[data-truck]');for(const g of document.querySelectorAll('.pt-ghost'))if(g.parentElement!==track||event.target!==track)g.remove();
-  if(!track||event.target!==track||ptDrag)return;let g=track.querySelector('.pt-ghost');if(!g){g=document.createElement('span');g.className='pt-ghost';track.appendChild(g);}
-  const m=ptMinuteAt(track,event.clientX);g.textContent='＋';g.style.left=((m-PT_FROM)/(PT_TO-PT_FROM)*100)+'%';});
-// Drag a card left/right: on release the stops not yet confirmed move by that time (snapped to 15 min).
-document.addEventListener('pointerdown',event=>{const el=event.target.closest?.('.pt-trip[data-drag]');if(!el||event.button!==0||event.target.closest('.pt-x'))return;const track=el.parentElement;
-  ptDrag={el,track,x:event.clientX,id:Number(el.dataset.id),width:track.getBoundingClientRect().width,minutes:0,a:Number(el.dataset.a),b:Number(el.dataset.b),
-    end:!!event.target.closest('[data-grip]'),w0:el.getBoundingClientRect().width};el.setPointerCapture(event.pointerId);});
+// Drag a card left/right among the tractor's cards of the day: on release it takes that place in the order
+// (its loading time goes between its new neighbours'; the hours themselves stay in the details).
+document.addEventListener('pointerdown',event=>{const el=event.target.closest?.('.pt-trip[data-drag]');if(!el||event.button!==0||event.target.closest('.pt-x'))return;
+  ptDrag={el,x:event.clientX,id:Number(el.dataset.id),at:Number(el.dataset.at)};el.setPointerCapture(event.pointerId);});
 document.addEventListener('pointermove',event=>{if(!ptDrag)return;const dx=event.clientX-ptDrag.x;if(Math.abs(dx)<5&&!ptDrag.moving)return;ptDrag.moving=true;
-  // The new start (or end, when stretching) lands on a quarter hour; a card stays at least 15 minutes long.
-  const span=PT_TO-PT_FROM,edge=ptDrag.end?ptDrag.b:ptDrag.a;let target=Math.round((edge+dx/ptDrag.width*span)/PT_SNAP)*PT_SNAP;
-  if(ptDrag.end)target=Math.min(PT_TO,Math.max(ptDrag.a+PT_SNAP,target));ptDrag.minutes=target-edge;const shown=ptDrag.minutes/span*ptDrag.width;
-  ptDrag.el.classList.add('dragging');if(ptDrag.end)ptDrag.el.style.width=Math.max(12,ptDrag.w0+shown)+'px';else ptDrag.el.style.transform=`translateX(${shown}px)`;});
+  ptDrag.el.classList.add('dragging');ptDrag.el.style.transform=`translateX(${dx}px)`;});
+function ptDropMinutes(drag){const box=drag.el.getBoundingClientRect(),mid=box.left+box.width/2;
+  const others=[...drag.el.parentElement.querySelectorAll('.pt-trip[data-drag]')].filter(x=>x!==drag.el).map(x=>{const r=x.getBoundingClientRect();return {at:Number(x.dataset.at),mid:r.left+r.width/2};}).sort((a,b)=>a.mid-b.mid);
+  const index=others.filter(x=>x.mid<mid).length,before=others[index-1],after=others[index];
+  if((!before||before.at<=drag.at)&&(!after||after.at>=drag.at))return 0;
+  let target=before&&after?Math.round((before.at+after.at)/2):before?before.at+60:after.at-60;target=Math.max(0,Math.min(23*60+55,Math.round(target/5)*5));
+  if(before&&target<=before.at)target=before.at+1;if(after&&target>=after.at)target=after.at-1;return target-drag.at;}
 document.addEventListener('pointerup',async()=>{const drag=ptDrag;ptDrag=null;if(!drag?.moving)return;ptJustDragged=true;setTimeout(()=>{ptJustDragged=false;},300);
-  if(!drag.minutes){drag.el.classList.remove('dragging');drag.el.style.transform='';placeTimeline();return;}
-  try{const result=await api('/api/order-move',{order_id:drag.id,minutes:drag.minutes,end:drag.end});plannerSel=drag.id;await refresh();toast(result.message+(result.warning?' '+result.warning:''),!!result.warning);}
-  catch(error){drag.el.classList.remove('dragging');drag.el.style.transform='';placeTimeline();toast(error.message,true);}});
+  const minutes=ptDropMinutes(drag),reset=()=>{drag.el.classList.remove('dragging');drag.el.style.transform='';};
+  if(!minutes){reset();return;}
+  try{const result=await api('/api/order-move',{order_id:drag.id,minutes});plannerSel=drag.id;await refresh();toast(result.message);}
+  catch(error){reset();toast(error.message,true);}});
 // Drag a tractor (its name) up or down: the rows keep that order, for everyone.
 let ptRowDrag=null;
 document.addEventListener('pointerdown',event=>{const grip=event.target.closest?.('[data-row-grip]');if(!grip||event.button!==0)return;const row=grip.closest('[data-truck-row]');
